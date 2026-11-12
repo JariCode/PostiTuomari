@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PostiTuomari",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Lajittelee postin lähettäjän ja otsikon perusteella",
   "browser_specific_settings": {
     "gecko": {
@@ -12,5 +12,5 @@
   "background": {
     "scripts": ["rules.js", "rules.local.js", "background.js"]
   },
-  "permissions": ["accountsRead", "messagesRead"]
+  "permissions": ["accountsRead", "accountsFolders", "messagesRead", "messagesMove"]
 }

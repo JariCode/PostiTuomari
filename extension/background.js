@@ -1,8 +1,16 @@
+// ===== Asetukset =====
+const SETTINGS = {
+  dryRun: true,                // true = vain kerrotaan, false = siirretään oikeasti
+  parentFolder: "PostiTuomari", // kansio, jonka alle kategoriat luodaan
+};
+
 // Omat säännöt ensin, jotta ne voittavat yleiset
 const ALL_RULES = [
   ...(typeof LOCAL_RULES !== "undefined" ? LOCAL_RULES : []),
   ...RULES,
 ];
+
+// ===== Viestien luku =====
 
 // Käy läpi kaikki viestit kansiosta (API palauttaa ne sivuina)
 async function* getMessages(folderId) {
@@ -14,6 +22,8 @@ async function* getMessages(folderId) {
     for (const msg of page.messages) yield msg;
   }
 }
+
+// ===== Luokittelu =====
 
 // "Nimi <osoite@domain.fi>" → "osoite@domain.fi"
 function parseEmail(author = "") {
@@ -77,12 +87,44 @@ function logVerdict(msg, verdict) {
   console.log(`⚖️ ${target} | ${msg.author} | ${msg.subject}`);
 }
 
-// Kuivaharjoitus: käy saapuneet läpi ja kertoo mihin viestit menisivät
-async function judgeInboxes() {
+// ===== Kansiot =====
+
+// Välimuisti, ettei kansioita haeta joka viestille uudestaan
+const folderCache = new Map();
+
+// Hakee alikansion nimellä tai luo sen, jos sitä ei ole
+async function findOrCreateSubfolder(parentId, name) {
+  const subFolders = await messenger.folders.getSubFolders(parentId, false);
+  const existing = subFolders.find((f) => f.name === name);
+  if (existing) return existing;
+
+  console.log(`📁 Luodaan kansio: ${name}`);
+  return messenger.folders.create(parentId, name);
+}
+
+// Tili → PostiTuomari → Kategoria
+async function getTargetFolder(accountId, category) {
+  const key = `${accountId}/${category}`;
+  if (folderCache.has(key)) return folderCache.get(key);
+
+  const account = await messenger.accounts.get(accountId);
+  const parent = await findOrCreateSubfolder(account.rootFolder.id, SETTINGS.parentFolder);
+  const target = await findOrCreateSubfolder(parent.id, category);
+
+  folderCache.set(key, target);
+  return target;
+}
+
+// ===== Lajittelu =====
+
+// Käy saapuneet läpi, kerää siirtosuunnitelman ja toteuttaa sen (ellei dryRun)
+async function sortInboxes() {
   const inboxes = await messenger.folders.query({ specialUse: ["inbox"] });
   const stats = {};
   const unmatchedDomains = {};
+  const plan = new Map(); // "accountId|kategoria" → [viesti-id:t]
 
+  // 1. Luokitellaan ensin kaikki – ei siirretä kesken listauksen
   for (const inbox of inboxes) {
     console.log(`📥 ${inbox.name} (${inbox.accountId})`);
 
@@ -93,7 +135,11 @@ async function judgeInboxes() {
       const key = verdict ? verdict.category : "(ei sääntöä)";
       stats[key] = (stats[key] ?? 0) + 1;
 
-      if (!verdict) {
+      if (verdict) {
+        const planKey = `${inbox.accountId}|${verdict.category}`;
+        if (!plan.has(planKey)) plan.set(planKey, []);
+        plan.get(planKey).push(msg.id);
+      } else {
         const domain = getDomain(parseEmail(msg.author)) || "(tuntematon)";
         unmatchedDomains[domain] = (unmatchedDomains[domain] ?? 0) + 1;
       }
@@ -102,21 +148,53 @@ async function judgeInboxes() {
 
   console.table(stats);
 
-  // 30 yleisintä domainia, joille ei ole sääntöä
   const top = Object.entries(unmatchedDomains)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 30)
     .map(([domain, count]) => ({ domain, count }));
-
   console.log("🔍 Eniten luokittelemattomia lähettäjiä:");
   console.table(top);
+
+  // 2. Siirrot
+  const summary = [...plan].map(([planKey, ids]) => {
+    const [accountId, category] = planKey.split("|");
+    return { accountId, category, count: ids.length };
+  });
+
+  if (SETTINGS.dryRun) {
+    console.log("🧪 KUIVAHARJOITUS – näin siirrettäisiin (dryRun: true):");
+    console.table(summary);
+    return;
+  }
+
+  console.log("🚚 Siirretään viestit...");
+  for (const [planKey, ids] of plan) {
+    const [accountId, category] = planKey.split("|");
+    const target = await getTargetFolder(accountId, category);
+    await messenger.messages.move(ids, target.id);
+    console.log(`✅ ${ids.length} viestiä → ${SETTINGS.parentFolder}/${category} (${accountId})`);
+  }
+  console.log("🏁 Valmis");
 }
 
-judgeInboxes().catch(console.error);
+sortInboxes().catch(console.error);
 
-// Uusi posti
-messenger.messages.onNewMailReceived.addListener((folder, messageList) => {
+// ===== Uusi posti =====
+messenger.messages.onNewMailReceived.addListener(async (folder, messageList) => {
+  // Lajitellaan vain saapuneisiin tullut posti (ei esim. roskapostia)
+  if (!folder.specialUse?.includes("inbox")) return;
+
   for (const msg of messageList.messages) {
-    logVerdict(msg, classify(msg));
+    const verdict = classify(msg);
+    logVerdict(msg, verdict);
+
+    if (verdict && !SETTINGS.dryRun) {
+      try {
+        const target = await getTargetFolder(folder.accountId, verdict.category);
+        await messenger.messages.move([msg.id], target.id);
+      } catch (err) {
+        console.error("Siirto epäonnistui:", err);
+      }
+    }
   }
 });
