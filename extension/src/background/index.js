@@ -106,6 +106,8 @@ const debugTools = {
     return (await missingDefaultRules()).map((r) => ({ id: r.id, category: r.category, subjectFirst: r.subjectFirst }));
   },
   addDefaultRule: (id) => addDefaultRule(id),
+  // Popup omaan välilehteen vianetsintää varten (virheet näkyvät tässä konsolissa)
+  openPopupInTab: () => api().tabs.create({ url: api().runtime.getURL("popup/index.html") }),
   sortNow: () => sortInboxes(),
   restoreFlagged: (options) => restoreFlagged(options),
   // Tuonti vientitiedoston sisällöstä (objekti tai JSON-merkkijono). Palauttaa vain määrät.

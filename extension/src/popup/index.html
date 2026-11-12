@@ -4,9 +4,17 @@
     <meta charset="utf-8" />
     <meta name="color-scheme" content="light dark" />
     <title>PostiTuomari</title>
+    <!-- Kiinteä leveys jo ennen kuin CSS-tiedosto latautuu (Thunderbird mitoittaa popupin heti) -->
+    <style>
+      html, body { width: 380px; min-width: 380px; margin: 0; }
+      body { min-height: 160px; font: 14px/1.5 system-ui, sans-serif; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Näkyy, jos skripti ei lataudu tai kaatuu ennen renderöintiä -->
+      <p style="padding: 0.75rem; margin: 0">Ladataan PostiTuomaria…</p>
+    </div>
     <script type="module" src="./main.jsx"></script>
   </body>
 </html>
