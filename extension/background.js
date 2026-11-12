@@ -1,6 +1,6 @@
 // ===== Asetukset =====
 const SETTINGS = {
-  dryRun: true, // true = vain kerrotaan, false = siirretään oikeasti
+  dryRun: false, // true = vain kerrotaan, false = siirretään oikeasti
   ai: {
     enabled: true,
     url: "http://localhost:3001/classify",
