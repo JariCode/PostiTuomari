@@ -24,10 +24,27 @@ function subjectMatches(rule, subject) {
   return (rule.subjectWords ?? []).some((w) => subject.includes(w));
 }
 
+function senderMatches(rule, email) {
+  return (rule.addresses ?? []).includes(email) || (rule.domains ?? []).some((d) => senderDomainMatches(email, d));
+}
+
 // Tuomio: palauttaa { category, reason, ruleId } tai null
-export function classify(msg, rules) {
+//   0. match: "all" -säännöt: lähettäjä JA otsikkosana (esim. sama lähettäjä, laskut vs. uutiskirjeet)
+//   1. subjectFirst: otsikko ohittaa lähettäjän
+//   2. tarkka osoite   3. domain   4. otsikon sanat
+// All-säännöt eivät osu vaiheissa 1–4 pelkällä lähettäjällä tai otsikolla.
+export function classify(msg, allRules) {
   const email = parseEmail(msg.author);
   const subject = (msg.subject ?? "").toLowerCase();
+
+  // 0. Lähettäjä + otsikko
+  for (const rule of allRules) {
+    if (rule.match === "all" && senderMatches(rule, email) && subjectMatches(rule, subject)) {
+      return { category: rule.category, reason: "lähettäjä + otsikko", ruleId: rule.id };
+    }
+  }
+
+  const rules = allRules.filter((r) => r.match !== "all");
 
   // 1. Säännöt, joissa otsikko ohittaa lähettäjän (esim. tietoturva)
   for (const rule of rules) {

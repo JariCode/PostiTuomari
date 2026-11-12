@@ -48,12 +48,15 @@ export const DEFAULT_CATEGORIES = [
 ];
 
 // Sääntöjen järjestys merkitsee: ensimmäinen osuva sääntö voittaa kussakin vaiheessa.
+//   0. match: "all" → lähettäjän JA otsikkosanan pitää osua (tarkistetaan ensin)
 //   1. subjectFirst-säännöt → otsikko ratkaisee ennen lähettäjää
 //   2. tarkka lähettäjäosoite (addresses)
 //   3. lähettäjän domain, myös alidomainit (domains)
 //   4. otsikon sanat (subjectWords)
+// Kiinteät id:t, jotta yksittäisen oletussäännön voi lisätä myöhemmin (addDefaultRule).
 export const DEFAULT_RULE_TEMPLATES = [
   {
+    id: "default-tietoturva",
     category: "Tilit ja tietoturva",
     subjectFirst: true,
     subjectWords: [
@@ -63,33 +66,52 @@ export const DEFAULT_RULE_TEMPLATES = [
     ],
   },
   {
+    // Laskut ratkaisevat ennen lähettäjää: kaupan tai palvelun lasku menee Rahaan, ei lähettäjän kategoriaan
+    id: "default-raha-laskut",
+    category: "Raha",
+    subjectFirst: true,
+    subjectWords: ["lasku", "eräpäivä", "maksumuistutus"],
+  },
+  {
+    id: "default-tyonhaku",
     category: "Työnhaku",
     subjectWords: [
       "työhakemus", "hakemuksesi", "haastattelu", "rekrytoi",
       "job application", "your application", "työpaikka",
     ],
   },
-  { category: "Opiskelu", subjectWords: ["kurssi", "opinnot"] },
+  { id: "default-opiskelu", category: "Opiskelu", subjectWords: ["kurssi", "opinnot"] },
   {
+    id: "default-terveys",
     category: "Terveys",
     subjectWords: ["ajanvaraus", "laboratorio", "resepti", "lääkäri", "hammaslääkäri"],
   },
-  { category: "Viranomaiset", subjectWords: ["verotus", "verokortti", "veropäätös"] },
-  // Ennen Rahaa, ettei "vakuutuslasku" osu ensin sanaan "lasku"
-  { category: "Vakuutukset", subjectWords: ["vakuutus", "vahinkoilmoitus", "korvaushakemus"] },
-  { category: "Raha", subjectWords: ["lasku", "eräpäivä", "maksumuistutus", "laina"] },
+  { id: "default-viranomaiset", category: "Viranomaiset", subjectWords: ["verotus", "verokortti", "veropäätös"] },
   {
+    id: "default-vakuutukset",
+    category: "Vakuutukset",
+    subjectWords: ["vakuutus", "vahinkoilmoitus", "korvaushakemus"],
+  },
+  { id: "default-raha", category: "Raha", subjectWords: ["laina"] },
+  {
+    id: "default-asuminen",
     category: "Asuminen",
     subjectWords: ["asumisoikeus", "asuntonäyttö", "vuokra", "isännöitsijä", "sähkösopimus"],
   },
-  { category: "Matkat", subjectWords: ["lentolippu", "matkavaraus", "flight", "booking confirmation"] },
   {
+    id: "default-matkat",
+    category: "Matkat",
+    subjectWords: ["lentolippu", "matkavaraus", "flight", "booking confirmation"],
+  },
+  {
+    id: "default-ostokset",
     category: "Ostokset",
     subjectWords: ["tilausvahvistus", "tilauksesi", "order confirmation", "kuitti", "receipt", "lähetys"],
   },
-  { category: "Harrastukset", subjectWords: ["jäsenmaksu", "treenit", "kilpailu"] },
+  { id: "default-harrastukset", category: "Harrastukset", subjectWords: ["jäsenmaksu", "treenit", "kilpailu"] },
   // Alimpana, koska sanat ovat yleisiä
   {
+    id: "default-uutiskirjeet",
     category: "Uutiskirjeet",
     subjectWords: ["uutiskirje", "newsletter", "tarjous", "kampanja", "alennus", "webinaari", "webinar"],
   },

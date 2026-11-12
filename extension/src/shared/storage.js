@@ -2,7 +2,7 @@
 //
 //   settings     – ks. DEFAULT_SETTINGS
 //   categories   – kategorioiden järjestetty lista
-//   rules        – [{ id, category, subjectFirst, addresses, domains, subjectWords }], järjestys merkitsee
+//   rules        – [{ id, category, match, subjectFirst, addresses, domains, subjectWords }], järjestys merkitsee
 //   aiBlocklist  – { addresses, domains }: näitä lähettäjiä ei koskaan lähetetä AI:lle
 //   manualMoves  – headerMessageId → kansion polku, johon käyttäjä viestin siirsi
 //   aiUnsure     – headerMessageId → aikaleima: AI ei osannut päättää, ei kysytä uudelleen
@@ -78,6 +78,50 @@ export async function saveBlocklist(raw) {
   if (errors.length) throw new Error(errors.join("\n"));
   await api().storage.local.set({ aiBlocklist: blocklist });
   return blocklist;
+}
+
+// Onko oletussääntö jo käytössä: sama id tai sama sisältö (tuodut säännöt saavat uudet id:t)
+function sameRule(a, b) {
+  const words = (r) => [...r.subjectWords].sort().join("|");
+  return (
+    a.id === b.id ||
+    (a.category === b.category &&
+      a.match === b.match &&
+      a.subjectFirst === b.subjectFirst &&
+      a.addresses.length === 0 &&
+      a.domains.length === 0 &&
+      words(a) === words(b))
+  );
+}
+
+// Oletussäännöt, joita tallennetuissa säännöissä ei vielä ole
+export async function missingDefaultRules() {
+  const { rules } = await loadState();
+  return createDefaultRules().filter((d) => !rules.some((r) => sameRule(d, r)));
+}
+
+// Lisää yhden oletussäännön olemassa oleviin sääntöihin ilman muiden sääntöjen muuttamista.
+// Etusijasääntö lisätään viimeiseksi muiden etusijasääntöjen jälkeen (järjestys niiden kesken säilyy),
+// muut sääntöjen loppuun.
+export async function addDefaultRule(id) {
+  const rule = createDefaultRules().find((r) => r.id === id);
+  if (!rule) throw new Error(`Tuntematon oletussääntö: ${id}`);
+
+  const { rules, categories } = await loadState();
+  if (rules.some((r) => sameRule(rule, r))) return { added: false, rules: rules.length };
+
+  const next = [...rules];
+  if (rule.subjectFirst) {
+    const lastFirst = next.reduce((acc, r, i) => (r.subjectFirst ? i : acc), -1);
+    next.splice(lastFirst + 1, 0, rule);
+  } else {
+    next.push(rule);
+  }
+
+  const update = { rules: next };
+  if (!categories.includes(rule.category)) update.categories = [...categories, rule.category];
+  await api().storage.local.set(update);
+  return { added: true, rules: next.length };
 }
 
 export async function clearMemory(key) {

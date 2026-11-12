@@ -1,6 +1,6 @@
 // PostiTuomari – taustaskripti.
 // Kuuntelijat rekisteröidään heti ylätasolla, jotta MV3:n tapahtumasivu herää niihin.
-import { api, ensureDefaults, loadState, saveSettings } from "../shared/storage.js";
+import { addDefaultRule, api, ensureDefaults, loadState, missingDefaultRules, saveSettings } from "../shared/storage.js";
 import { applyImport, parseImport } from "../shared/transfer.js";
 import { testAiConnection } from "./ai.js";
 import { handleMoved, handleNewMail, loadMemory, logAccounts, restoreFlagged, sortInboxes, watchMemory } from "./sort.js";
@@ -84,6 +84,11 @@ const debugTools = {
     return (await saveSettings({ aiEnabled: aiEnabled === true })).aiEnabled;
   },
   testAi: async () => testAiConnection(await loadState()),
+  // Oletussäännöt, joita ei vielä ole käytössä (id + kategoria), ja yksittäisen lisäys
+  async missingDefaultRules() {
+    return (await missingDefaultRules()).map((r) => ({ id: r.id, category: r.category, subjectFirst: r.subjectFirst }));
+  },
+  addDefaultRule: (id) => addDefaultRule(id),
   sortNow: () => sortInboxes(),
   restoreFlagged: (options) => restoreFlagged(options),
   // Tuonti vientitiedoston sisällöstä (objekti tai JSON-merkkijono). Palauttaa vain määrät.

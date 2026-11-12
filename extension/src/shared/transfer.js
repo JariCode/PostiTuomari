@@ -6,7 +6,8 @@
 //   "settings": { ...ilman apiKeytä },            (valinnainen)
 //   "accountNames": ["Tilin nimi"],               (valinnainen, muutetaan tuonnissa accountId:ksi)
 //   "categories": ["Raha", ...],
-//   "rules": [{ id, category, subjectFirst, addresses, domains, subjectWords }],
+//   "rules": [{ id, category, match, subjectFirst, addresses, domains, subjectWords }],
+//            match: "any" (oletus, myös jos kenttä puuttuu) tai "all" (lähettäjä JA otsikko)
 //   "aiBlocklist": { "addresses": [], "domains": [] }
 // }
 import { api } from "./storage.js";

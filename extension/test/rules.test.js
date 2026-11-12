@@ -84,3 +84,82 @@ test("tuonti lisää puuttuvan kategorian ja hylkää virheelliset", () => {
   assert.ok(parsed.errors.length > 0);
   assert.throws(() => parseImport({ format: "muu" }));
 });
+
+// ===== Lähettäjä JA otsikko (match: "all") =====
+
+const mixed = [
+  { id: "all", category: "Raha", match: "all", subjectFirst: false, addresses: [], domains: ["palvelu.example"], subjectWords: ["lasku"] },
+  { id: "dom", category: "Uutiskirjeet", match: "any", subjectFirst: false, addresses: [], domains: ["palvelu.example"], subjectWords: [] },
+];
+
+test("all: sama domain + otsikkosana → all-säännön kategoria", () => {
+  const v = classify({ author: "Palvelu <info@palvelu.example>", subject: "Lasku 11/2026" }, mixed);
+  assert.equal(v.category, "Raha");
+  assert.equal(v.reason, "lähettäjä + otsikko");
+});
+
+test("all: sama domain ilman sanaa → domain-säännön kategoria", () => {
+  const v = classify({ author: "Palvelu <info@palvelu.example>", subject: "Marraskuun uutiset" }, mixed);
+  assert.equal(v.category, "Uutiskirjeet");
+  assert.equal(v.reason, "lähettäjä");
+});
+
+test("all: ei osu pelkällä otsikolla eikä pelkällä lähettäjällä", () => {
+  const onlyAll = [mixed[0]];
+  assert.equal(classify({ author: "x@muu.example", subject: "Lasku" }, onlyAll), null);
+  assert.equal(classify({ author: "info@palvelu.example", subject: "Uutiset" }, onlyAll), null);
+});
+
+test("all: tarkistetaan ennen subjectFirst-sääntöjä, keskenään järjestyksessä", () => {
+  const rules = [
+    { id: "f", category: "Tilit ja tietoturva", match: "any", subjectFirst: true, addresses: [], domains: [], subjectWords: ["lasku"] },
+    { id: "a1", category: "Raha", match: "all", subjectFirst: false, addresses: ["laskutus@palvelu.example"], domains: [], subjectWords: ["lasku"] },
+    { id: "a2", category: "Ostokset", match: "all", subjectFirst: false, addresses: [], domains: ["palvelu.example"], subjectWords: ["lasku"] },
+  ];
+  assert.equal(classify({ author: "laskutus@palvelu.example", subject: "Lasku" }, rules).category, "Raha");
+  assert.equal(classify({ author: "muu@palvelu.example", subject: "Lasku" }, rules).category, "Ostokset");
+  assert.equal(classify({ author: "muu@toinen.example", subject: "Lasku" }, rules).category, "Tilit ja tietoturva");
+});
+
+test("laskusana etusijalla ohittaa toisen kategorian domain-säännön (oletussäännöt)", () => {
+  const rules = [
+    ...createDefaultRules(),
+    { id: "kauppa", category: "Ostokset", match: "any", subjectFirst: false, addresses: [], domains: ["kauppa.example"], subjectWords: [] },
+  ];
+  assert.equal(classify({ author: "info@kauppa.example", subject: "Lasku tilauksesta" }, rules).category, "Raha");
+  assert.equal(classify({ author: "info@kauppa.example", subject: "Uutuudet" }, rules).category, "Ostokset");
+  // "laina" on tavallinen otsikkosana: domain voittaa
+  assert.equal(classify({ author: "info@kauppa.example", subject: "Laina-aika" }, rules).category, "Ostokset");
+});
+
+test("all vaatii lähettäjän ja otsikkosanan; vanha sääntö ilman match-kenttää on any", () => {
+  assert.equal(normalizeRule({ category: "Raha", match: "all", domains: ["palvelu.example"] }).rule, null);
+  assert.equal(normalizeRule({ category: "Raha", match: "all", subjectWords: ["lasku"] }).rule, null);
+  const { rule } = normalizeRule({ category: "Raha", match: "all", subjectFirst: true, domains: ["palvelu.example"], subjectWords: ["lasku"] });
+  assert.equal(rule.match, "all");
+  assert.equal(rule.subjectFirst, false);
+  assert.equal(normalizeRule({ category: "Raha", domains: ["palvelu.example"] }).rule.match, "any");
+  assert.equal(normalizeRule({ category: "Raha", match: "jotain", domains: ["palvelu.example"] }).rule.match, "any");
+});
+
+test("vienti ja tuonti säilyttävät match-kentän", () => {
+  const exported = buildExport({
+    settings: normalizeSettings({}).settings,
+    categories: ["Raha"],
+    rules: [mixed[0]],
+    aiBlocklist: { addresses: [], domains: [] },
+  });
+  const parsed = parseImport(JSON.parse(JSON.stringify(exported)));
+  assert.equal(parsed.rules[0].match, "all");
+});
+
+test("oletuksissa laskut etusijalla ja laina tavallisena", () => {
+  const defaults = createDefaultRules();
+  const laskut = defaults.find((r) => r.id === "default-raha-laskut");
+  assert.equal(laskut.subjectFirst, true);
+  assert.deepEqual(laskut.subjectWords, ["lasku", "eräpäivä", "maksumuistutus"]);
+  const raha = defaults.find((r) => r.id === "default-raha");
+  assert.equal(raha.subjectFirst, false);
+  assert.deepEqual(raha.subjectWords, ["laina"]);
+  assert.equal(new Set(defaults.map((r) => r.id)).size, defaults.length);
+});

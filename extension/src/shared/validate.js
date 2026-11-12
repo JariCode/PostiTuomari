@@ -108,16 +108,29 @@ export function normalizeRule(raw) {
 
   if (!category) return { rule: null, errors };
 
+  // "any" = jokin ehto riittää (oletus, myös vanhoissa tiedostoissa ilman kenttää)
+  // "all" = lähettäjän JA jonkin otsikkosanan pitää osua
+  const match = raw?.match === "all" ? "all" : "any";
+
   const rule = {
     id: typeof raw?.id === "string" && raw.id.length > 0 && raw.id.length <= 64 ? raw.id : newId(),
     category,
-    subjectFirst: raw?.subjectFirst === true,
+    match,
+    // all-säännöt tarkistetaan aina ensin, joten etusija ei koske niitä
+    subjectFirst: match === "any" && raw?.subjectFirst === true,
     addresses: addresses.values,
     domains: domains.values,
     subjectWords: subjectWords.values,
   };
 
-  if (!rule.addresses.length && !rule.domains.length && !rule.subjectWords.length) {
+  const hasSender = rule.addresses.length > 0 || rule.domains.length > 0;
+  const hasWords = rule.subjectWords.length > 0;
+
+  if (match === "all" && (!hasSender || !hasWords)) {
+    errors.push(`Säännössä "${category}" pitää olla sekä lähettäjä (osoite tai domain) että otsikkosana`);
+    return { rule: null, errors };
+  }
+  if (!hasSender && !hasWords) {
     errors.push(`Säännössä "${category}" ei ole yhtään osoitetta, domainia tai otsikkosanaa`);
     return { rule: null, errors };
   }
