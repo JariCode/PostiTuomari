@@ -1,13 +1,24 @@
 // ===== Asetukset =====
 const SETTINGS = {
-  dryRun: false, // true = vain kerrotaan, false = siirretään oikeasti
+  dryRun: true, // true = vain kerrotaan, false = siirretään oikeasti
+  ai: {
+    enabled: true,
+    url: "http://localhost:3001/classify",
+    batchSize: 50,    // sama kuin backendin MAX_MESSAGES
+    timeoutMs: 30000, // kauanko backendin vastausta odotetaan
+  },
 };
+
+const UNSURE = "Epävarma";
 
 // Omat säännöt ensin, jotta ne voittavat yleiset
 const ALL_RULES = [
   ...(typeof LOCAL_RULES !== "undefined" ? LOCAL_RULES : []),
   ...RULES,
 ];
+
+// Kaikki kategoriat sääntöjen pohjalta – AI saa valita vain näistä
+const CATEGORIES = [...new Set(ALL_RULES.map((r) => r.category))];
 
 // ===== Lajiteltavat tilit =====
 
@@ -75,7 +86,7 @@ function isManual(msg) {
   return Boolean(msg.headerMessageId) && Object.hasOwn(manualMoves, msg.headerMessageId);
 }
 
-// ===== Luokittelu =====
+// ===== Sääntöluokittelu =====
 
 // "Nimi <osoite@domain.fi>" → "osoite@domain.fi"
 function parseEmail(author = "") {
@@ -139,6 +150,44 @@ function logVerdict(msg, verdict) {
   console.log(`⚖️ ${target} | ${msg.author} | ${msg.subject}`);
 }
 
+// ===== AI-luokittelu =====
+
+// Lähettää viestit backendille erissä. Palauttaa Map: viestin id (merkkijono) → kategoria.
+// Backendille lähtee vain id, lähettäjä ja otsikko – ei koskaan viestin sisältöä.
+async function classifyWithAI(messages) {
+  const verdicts = new Map();
+  const { url, batchSize, timeoutMs } = SETTINGS.ai;
+
+  for (let i = 0; i < messages.length; i += batchSize) {
+    const batch = messages.slice(i, i + batchSize);
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        categories: CATEGORIES,
+        messages: batch.map((m) => ({
+          id: String(m.id),
+          from: (m.author ?? "").slice(0, 300),
+          subject: (m.subject ?? "").slice(0, 500),
+        })),
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      throw new Error(`backend vastasi ${response.status}`);
+    }
+
+    const { results } = await response.json();
+    for (const r of results) verdicts.set(r.id, r.category);
+
+    console.log(`🤖 AI-erä ${i / batchSize + 1}: ${results.length}/${batch.length} viestiä`);
+  }
+
+  return verdicts;
+}
+
 // ===== Kansiot ja siirto =====
 
 // Välimuisti, ettei kansioita haeta joka viestille uudestaan
@@ -169,6 +218,13 @@ async function moveMessages(messages, targetFolder) {
   await messenger.messages.move(messages.map((m) => m.id), targetFolder.id);
 }
 
+// Lisää viestin siirtosuunnitelmaan
+function addToPlan(plan, inboxId, category, msg) {
+  const planKey = `${inboxId}|${category}`;
+  if (!plan.has(planKey)) plan.set(planKey, []);
+  plan.get(planKey).push(msg);
+}
+
 // ===== Lajittelu =====
 
 // Käy saapuneet läpi, kerää siirtosuunnitelman ja toteuttaa sen (ellei dryRun)
@@ -178,10 +234,11 @@ async function sortInboxes() {
 
   const stats = {};
   const unmatchedDomains = {};
+  const unmatched = [];         // [{ msg, inboxId }] – viestit ilman sääntöä
   const plan = new Map();       // "inboxId|kategoria" → [viestit]
   const inboxNames = new Map(); // inboxId → "Saapuneet (account1)"
 
-  // 1. Luokitellaan ensin kaikki – ei siirretä kesken listauksen
+  // 1. Säännöt – luokitellaan ensin kaikki, ei siirretä kesken listauksen
   for (const inbox of inboxes) {
     const label = `${inbox.name} (${inbox.accountId})`;
     inboxNames.set(inbox.id, label);
@@ -201,16 +258,16 @@ async function sortInboxes() {
       stats[key] = (stats[key] ?? 0) + 1;
 
       if (verdict) {
-        const planKey = `${inbox.id}|${verdict.category}`;
-        if (!plan.has(planKey)) plan.set(planKey, []);
-        plan.get(planKey).push(msg);
+        addToPlan(plan, inbox.id, verdict.category, msg);
       } else {
+        unmatched.push({ msg, inboxId: inbox.id });
         const domain = getDomain(parseEmail(msg.author)) || "(tuntematon)";
         unmatchedDomains[domain] = (unmatchedDomains[domain] ?? 0) + 1;
       }
     }
   }
 
+  console.log("📊 Säännöt:");
   console.table(stats);
 
   const top = Object.entries(unmatchedDomains)
@@ -220,7 +277,31 @@ async function sortInboxes() {
   console.log("🔍 Eniten luokittelemattomia lähettäjiä:");
   console.table(top);
 
-  // 2. Siirrot
+  // 2. AI niille, joille ei löytynyt sääntöä
+  if (SETTINGS.ai.enabled && unmatched.length > 0) {
+    console.log(`🤖 Kysytään AI:lta ${unmatched.length} viestiä...`);
+
+    try {
+      const aiVerdicts = await classifyWithAI(unmatched.map((u) => u.msg));
+      const aiStats = {};
+
+      for (const { msg, inboxId } of unmatched) {
+        const category = aiVerdicts.get(String(msg.id)) ?? UNSURE;
+        aiStats[category] = (aiStats[category] ?? 0) + 1;
+        console.log(`🤖 ${category} | ${msg.author} | ${msg.subject}`);
+
+        // Epävarmat jäävät Saapuneisiin
+        if (category !== UNSURE) addToPlan(plan, inboxId, category, msg);
+      }
+
+      console.log("🤖 AI:n tuomiot:");
+      console.table(aiStats);
+    } catch (err) {
+      console.warn(`⚠️ AI ei käytettävissä (${err.message}) – jatketaan pelkillä säännöillä`);
+    }
+  }
+
+  // 3. Siirrot
   const summary = [...plan].map(([planKey, messages]) => {
     const [inboxId, category] = planKey.split("|");
     return { inbox: inboxNames.get(inboxId), category, count: messages.length };
@@ -261,9 +342,23 @@ messenger.messages.onNewMailReceived.addListener(async (folder, messageList) => 
     const verdict = classify(msg);
     logVerdict(msg, verdict);
 
-    if (verdict && !SETTINGS.dryRun) {
+    let category = verdict?.category ?? null;
+
+    // Ei sääntöä → kysytään AI:lta
+    if (!category && SETTINGS.ai.enabled) {
       try {
-        const target = await getTargetFolder(folder.id, verdict.category);
+        const aiVerdicts = await classifyWithAI([msg]);
+        const aiCategory = aiVerdicts.get(String(msg.id)) ?? UNSURE;
+        console.log(`🤖 ${aiCategory} | ${msg.author} | ${msg.subject}`);
+        if (aiCategory !== UNSURE) category = aiCategory;
+      } catch (err) {
+        console.warn(`⚠️ AI ei käytettävissä (${err.message})`);
+      }
+    }
+
+    if (category && !SETTINGS.dryRun) {
+      try {
+        const target = await getTargetFolder(folder.id, category);
         await moveMessages([msg], target);
       } catch (err) {
         console.error("Siirto epäonnistui:", err);
