@@ -40,7 +40,32 @@ export function useStore() {
   return { data, error, reload };
 }
 
-// Viestit taustaskriptille (lajittelu, palautus, AI-testi)
+// Viestit taustaskriptille (lajittelu, palautus, AI-testi, avaimen hallinta)
 export function sendToBackground(message) {
   return api().runtime.sendMessage(message);
+}
+
+// API-avaimen tila taustaskriptiltä: { state: none|plain|locked|unlocked, protected, last4, sessionStorage }.
+// Itse avainta ei koskaan välitetä sivulle.
+export function useKeyStatus() {
+  const [status, setStatus] = useState(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await sendToBackground({ type: "keyStatus" }));
+    } catch {
+      setStatus(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const listener = (changes, area) => {
+      if (area === "local" && (changes.settings || changes.apiKeyVault)) refresh();
+    };
+    api().storage.onChanged.addListener(listener);
+    return () => api().storage.onChanged.removeListener(listener);
+  }, [refresh]);
+
+  return { status, setStatus, refresh };
 }

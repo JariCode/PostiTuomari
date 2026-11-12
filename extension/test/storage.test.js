@@ -104,7 +104,7 @@ test("kategorian nimeäminen päivittää säännöt, poisto poistaa säännöt"
       { id: "b", category: "Ostokset", domains: ["kauppa.example"] },
     ],
   });
-  assert.deepEqual(await renameCategory("Raha", " Talous "), { renamedRules: 1 });
+  assert.deepEqual(await renameCategory("Raha", " Talous "), { renamedRules: 1, newName: "Talous" });
   assert.deepEqual(store.categories, ["Talous", "Ostokset"]);
   assert.equal(store.rules[0].category, "Talous");
   await assert.rejects(() => renameCategory("Talous", "ostokset"));

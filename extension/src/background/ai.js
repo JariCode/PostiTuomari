@@ -1,16 +1,17 @@
 // AI-luokittelu suoraan OpenAI:lta. Ainoa ulkoinen yhteys on https://api.openai.com.
-// Lähtee vain anonymisoitu lähettäjä (nimi + domain) ja otsikko – ei osoitteita, ei sisältöä.
+// Lähtee vain anonymisoitu lähettäjä (verkkotunnus, valinnaisesti nimi) ja otsikko, josta osoitteet ja
+// henkilötiedot on korvattu – ei koskaan viestin sisältöä.
 // API-avainta ei koskaan kirjoiteta lokiin eikä virheilmoituksiin.
 import {
   AI_BATCH_SIZE,
   AI_TIMEOUT_MS,
-  EMAIL_BLOCKED_MESSAGE,
   OPENAI_URL,
-  assertNoEmails,
+  assertSafeToSend,
   buildRequestBody,
   parseAiResponse,
   toAiMessages,
 } from "../shared/aiRequest.js";
+import { privacyOptions } from "../shared/privacy.js";
 
 // HTTP-virhe selkokielelle. Vastauksen runkoa ei lueta, koska siinä voi olla osa avaimesta.
 function httpError(status) {
@@ -50,26 +51,29 @@ async function post(apiKey, body) {
 }
 
 // Luokittelee viestit erissä. Palauttaa { verdicts: Map id → kategoria, problems: [] }.
-// Erä, josta löytyy osoite, jätetään lähettämättä. Verkko- tai HTTP-virhe lopettaa loput erät.
-export async function classifyWithAI(messages, { settings, categories }) {
+// Erä, josta löytyy osoite, henkilötunnus tai korttinumero, jätetään lähettämättä.
+// Verkko- tai HTTP-virhe lopettaa loput erät.
+//   apiKey: avattu avain (oletus settings.apiKey), protectedNames: suojattavat nimet → [nimi]
+export async function classifyWithAI(messages, { settings, categories, apiKey = settings.apiKey, protectedNames = [] }) {
   const verdicts = new Map();
   const problems = [];
+  const options = privacyOptions(settings, protectedNames);
 
   for (let i = 0; i < messages.length; i += AI_BATCH_SIZE) {
     const batchNo = i / AI_BATCH_SIZE + 1;
-    const aiMessages = toAiMessages(messages.slice(i, i + AI_BATCH_SIZE), settings.freemailDomains);
+    const aiMessages = toAiMessages(messages.slice(i, i + AI_BATCH_SIZE), options);
     const body = JSON.stringify(buildRequestBody(settings.model, categories, aiMessages));
 
     try {
-      assertNoEmails(body);
+      assertSafeToSend(body);
     } catch (err) {
-      console.error(`⛔ AI-erä ${batchNo}: ${EMAIL_BLOCKED_MESSAGE}`);
+      console.error(`⛔ AI-erä ${batchNo}: ${err.message}`);
       problems.push(err.message);
       continue;
     }
 
     try {
-      const data = await post(settings.apiKey, body);
+      const data = await post(apiKey, body);
       const batchVerdicts = parseAiResponse(data, aiMessages.map((m) => m.id), categories);
       for (const [id, category] of batchVerdicts) verdicts.set(id, category);
       console.log(`🤖 AI-erä ${batchNo}: ${batchVerdicts.size}/${aiMessages.length} viestiä`);
@@ -85,16 +89,16 @@ export async function classifyWithAI(messages, { settings, categories }) {
 
 // "Testaa yhteys": yksi keksitty viesti samalla pyyntömuodolla kuin oikeassa lajittelussa,
 // jolloin samalla varmistuu, että malli tukee Structured Outputsia.
-export async function testAiConnection({ settings, categories }) {
-  if (!settings.apiKey) return { ok: false, message: "API-avain puuttuu" };
+export async function testAiConnection({ settings, categories, apiKey = settings.apiKey, keyState }) {
+  if (!apiKey) return { ok: false, message: keyState === "locked" ? "API-avain on lukossa – avaa se salasanalla" : "API-avain puuttuu" };
 
   const sample = [{ id: "1", from: "Verkkokauppa (kauppa.example)", subject: "Tilausvahvistus" }];
   const body = JSON.stringify(buildRequestBody(settings.model, categories, sample));
 
   try {
-    assertNoEmails(body);
+    assertSafeToSend(body);
     const started = Date.now();
-    const data = await post(settings.apiKey, body);
+    const data = await post(apiKey, body);
     const verdicts = parseAiResponse(data, ["1"], categories);
     return {
       ok: true,

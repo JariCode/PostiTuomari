@@ -49,3 +49,4 @@ label.inline { display: inline-flex; gap: 0.3rem; align-items: center; cursor: p
 .block { display: block; }
 .crash { padding: 0.75rem; }
 .crash pre { white-space: pre-wrap; word-break: break-word; max-height: 12rem; }
+.unlock { border-top: 1px solid var(--border); padding-top: 0.6rem; }

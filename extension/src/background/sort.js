@@ -3,7 +3,9 @@ import { FLAGGED_LABEL, UNSURE } from "../shared/constants.js";
 import { classify, getDomain, isAiBlocked, parseEmail } from "../shared/classify.js";
 import { api, loadState } from "../shared/storage.js";
 import { MAX_MEMORY_ENTRIES, hasEntry, pruneMemory, setEntry } from "../shared/memory.js";
+import { collectProtectedNames } from "../shared/protectedNames.js";
 import { classifyWithAI } from "./ai.js";
+import { resolveApiKey } from "./keyStore.js";
 
 const MANUAL_LABEL = "(käsin lajiteltu)";
 const NO_RULE_LABEL = "(ei sääntöä)";
@@ -58,7 +60,10 @@ export function watchMemory() {
     if (area !== "local") return;
     if (changes.manualMoves) memory.manualMoves = changes.manualMoves.newValue ?? {};
     if (changes.aiUnsure) memory.aiUnsure = changes.aiUnsure.newValue ?? {};
-    if (changes.settings) setVerbose(changes.settings.newValue);
+    if (changes.settings) {
+      setVerbose(changes.settings.newValue);
+      clearNamesCache();
+    }
   });
 }
 
@@ -204,15 +209,32 @@ function exclusive(fn) {
 
 // Kysyy AI:lta viestit, joille ei löytynyt sääntöä. Palauttaa { verdicts: Map, status }.
 // Ei koskaan heitä: virheessä jatketaan pelkillä säännöillä.
+// Suojattavat nimet välimuistissa (osoitekirjan luku voi olla hidas); tyhjennetään asetusmuutoksessa
+let namesCache = null;
+const NAMES_TTL_MS = 5 * 60 * 1000;
+
+export function clearNamesCache() {
+  namesCache = null;
+}
+
+async function cachedProtectedNames(settings) {
+  if (namesCache && Date.now() - namesCache.at < NAMES_TTL_MS) return namesCache.names;
+  const names = await collectProtectedNames(settings);
+  namesCache = { at: Date.now(), names };
+  return names;
+}
+
 async function askAI(messages, state) {
   const { settings } = state;
   if (!settings.aiEnabled) return { verdicts: new Map(), status: "pois päältä" };
-  if (!settings.apiKey) return { verdicts: new Map(), status: "API-avain puuttuu" };
+  const { apiKey, keyState } = await resolveApiKey(settings);
+  if (!apiKey) return { verdicts: new Map(), status: keyState === "locked" ? "avain lukossa" : "API-avain puuttuu" };
   if (messages.length === 0) return { verdicts: new Map(), status: "ei kysyttävää" };
 
   try {
     console.log(`🤖 Kysytään AI:lta ${messages.length} viestiä...`);
-    const { verdicts, problems } = await classifyWithAI(messages, state);
+    const protectedNames = await cachedProtectedNames(settings);
+    const { verdicts, problems } = await classifyWithAI(messages, { ...state, apiKey, protectedNames });
 
     // Muistiin vain ne, joista AI vastasi nimenomaan "Epävarma" – ei estettyjä eikä epäonnistuneita eriä
     let unsureChanged = false;
@@ -494,6 +516,50 @@ export function moveToCategory(messageId, category) {
     }
     console.log(`🖐️ Siirretty popupista → ${category}`);
     return { folder: target.name };
+  });
+}
+
+// ===== Kategoriakansion uudelleennimeäminen =====
+
+// Kun kategoria nimetään uudelleen: valittujen tilien Saapuneiden alla oleva vanhanniminen kansio
+// nimetään uudelleen, jos uudella nimellä ei ole jo kansiota. Kuivaharjoituksessa vain raportoi.
+// Palauttaa { dryRun, folders: [{ inbox, action: "rename" | "exists" | "missing" | "error", error? }] }
+export function renameCategoryFolders(oldName, newName) {
+  return exclusive(async () => {
+    const { settings, categories } = await loadState();
+    if (!categories.includes(newName) || categories.includes(oldName)) {
+      throw new Error("Kategoriaa ei ole nimetty uudelleen");
+    }
+
+    const inboxes = await getIncludedInboxes(settings);
+    const folders = [];
+    for (const inbox of inboxes) {
+      const label = `${inbox.name} (${inbox.accountId})`;
+      const subFolders = await api().folders.getSubFolders(inbox.id, false);
+      const source = subFolders.find((f) => f.name === oldName);
+      if (!source) {
+        folders.push({ inbox: label, action: "missing" });
+        continue;
+      }
+      if (subFolders.some((f) => f.name === newName)) {
+        folders.push({ inbox: label, action: "exists" });
+        continue;
+      }
+      if (settings.dryRun) {
+        folders.push({ inbox: label, action: "rename" });
+        continue;
+      }
+      try {
+        await api().folders.rename(source.id, newName);
+        folders.push({ inbox: label, action: "rename" });
+        console.log(`📁 Kansio nimetty uudelleen → ${newName} (${inbox.accountId})`);
+      } catch (err) {
+        folders.push({ inbox: label, action: "error", error: err?.message ?? String(err) });
+      }
+    }
+    // Vanhat kansio-oliot pois välimuistista
+    folderCache.clear();
+    return { dryRun: settings.dryRun, folders };
   });
 }
 

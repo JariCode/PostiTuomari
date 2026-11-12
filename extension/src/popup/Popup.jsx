@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { APP_NAME, FLAGGED_LABEL } from "../shared/constants.js";
 import { domainMatches, getDomain, parseEmail } from "../shared/classify.js";
 import { api, loadState, saveRules } from "../shared/storage.js";
-import { sendToBackground, useStore } from "../shared/useStore.js";
+import { sendToBackground, useKeyStatus, useStore } from "../shared/useStore.js";
 import { splitAngle } from "../shared/text.js";
 import { normalizeRule } from "../shared/validate.js";
 
@@ -11,6 +11,14 @@ const REASONS = {
   blocked: { label: "ei AI:lle", kind: "" },
   norule: { label: "ei sääntöä", kind: "" },
 };
+
+function aiText(settings, keyStatus) {
+  if (!settings.aiEnabled) return "pois päältä";
+  const state = keyStatus?.state;
+  if (state === "locked") return "avain lukossa";
+  if (state === "none") return "avain puuttuu";
+  return "käytössä";
+}
 
 function formatTime(at) {
   return new Date(at).toLocaleString("fi-FI", { dateStyle: "short", timeStyle: "short" });
@@ -246,10 +254,48 @@ function Unsorted({ data, refreshKey }) {
   );
 }
 
+// ===== Lukitun avaimen avaus =====
+
+// Kysytään kerran Thunderbirdin käynnistyksen jälkeen, kun avain on suojattu salasanalla
+function UnlockAi({ setKeyStatus }) {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      setKeyStatus(await sendToBackground({ type: "unlockKey", password }));
+      setPassword("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="unlock" onSubmit={submit}>
+      <label className="field">
+        <span>Avaa tekoäly</span>
+        <span className="muted small block">API-avain on lukossa. Lajittelu käyttää vain sääntöjä, kunnes avaat sen.</span>
+        <div className="row">
+          <input type="password" className="grow" value={password} maxLength={200} autoComplete="current-password" placeholder="Salasana" onChange={(e) => setPassword(e.target.value)} />
+          <button type="submit" className="primary" disabled={!password || busy}>{busy ? "…" : "Avaa"}</button>
+        </div>
+      </label>
+      {error && <div className="notice danger small">{error}</div>}
+    </form>
+  );
+}
+
 // ===== Popup =====
 
 export function Popup() {
   const { data, error } = useStore();
+  const { status: keyStatus, setStatus: setKeyStatus } = useKeyStatus();
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -300,9 +346,10 @@ export function Popup() {
             {settings.dryRun
               ? "Kuivaharjoitus: näytetään, mihin viestit menisivät, mutta mitään ei siirretä."
               : "Viestit siirretään kategoriakansioihin. Liputetut ja käsin lajitellut jäävät paikalleen."}
-            {" "}AI: {settings.aiEnabled ? (settings.apiKey ? "käytössä" : "avain puuttuu") : "pois päältä"}.
+            {" "}AI: {aiText(settings, keyStatus)}.
           </p>
           {runError && <div className="notice danger small">{runError}</div>}
+          {settings.aiEnabled && keyStatus?.state === "locked" && <UnlockAi setKeyStatus={setKeyStatus} />}
         </>
       )}
 

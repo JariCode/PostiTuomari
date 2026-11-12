@@ -4,12 +4,25 @@ import { addDefaultRule, api, ensureDefaults, loadState, missingDefaultRules, sa
 import { applyImport, parseImport } from "../shared/transfer.js";
 import { testAiConnection } from "./ai.js";
 import {
+  changePassword,
+  forgetKey,
+  keyStatus,
+  lockKey,
+  protectKey,
+  removeProtection,
+  replaceProtectedKey,
+  resolveApiKey,
+  setPlainKey,
+  unlockKey,
+} from "./keyStore.js";
+import {
   handleMoved,
   handleNewMail,
   listUnsorted,
   loadMemory,
   logAccounts,
   moveToCategory,
+  renameCategoryFolders,
   restoreFlagged,
   sortInboxes,
   watchMemory,
@@ -74,11 +87,51 @@ api().runtime.onMessage.addListener((message, sender) => {
       }
       return ready.then(() => moveToCategory(message.messageId, message.category));
     case "testAi":
-      return ready.then(async () => testAiConnection(await loadState()));
+      return ready.then(async () => {
+        const state = await loadState();
+        return testAiConnection({ ...state, ...(await resolveApiKey(state.settings)) });
+      });
+    case "renameCategoryFolders":
+      if (!isText(message.oldName) || !isText(message.newName)) return Promise.reject(new Error("Virheellinen pyyntö"));
+      return ready.then(() => renameCategoryFolders(message.oldName, message.newName));
+
+    // API-avain: tila, avaus, lukitus ja suojaus. Avainta ei koskaan palauteta.
+    case "keyStatus":
+      return keyStatus();
+    case "unlockKey":
+      return withPassword(message.password, () => unlockKey(message.password));
+    case "lockKey":
+      return lockKey().then(keyStatus);
+    case "setPlainKey":
+      if (!isText(message.apiKey, 300)) return Promise.reject(new Error("Virheellinen API-avain"));
+      return setPlainKey(message.apiKey).then(keyStatus);
+    case "protectKey":
+      return withPassword(message.password, () => protectKey(message.password));
+    case "changeKeyPassword":
+      return withPassword(message.oldPassword, () =>
+        isText(message.newPassword, 200) ? changePassword(message.oldPassword, message.newPassword) : Promise.reject(new Error("Virheellinen salasana"))
+      );
+    case "replaceProtectedKey":
+      if (!isText(message.apiKey, 300)) return Promise.reject(new Error("Virheellinen API-avain"));
+      return withPassword(message.password, () => replaceProtectedKey(message.apiKey, message.password));
+    case "removeKeyProtection":
+      return withPassword(message.password, () => removeProtection(message.password));
+    case "forgetKey":
+      return forgetKey().then(keyStatus);
     default:
       return undefined;
   }
 });
+
+function isText(value, max = 100) {
+  return typeof value === "string" && value.length > 0 && value.length <= max;
+}
+
+// Salasanaa vaativat toiminnot: tyyppitarkistus ja lopuksi uusi tila (ei avainta)
+function withPassword(password, fn) {
+  if (!isText(password, 200)) return Promise.reject(new Error("Väärä salasana"));
+  return ready.then(fn).then(keyStatus);
+}
 
 // ===== Apuvälineet kehitykseen ja testaukseen (Debug Add-ons → Inspect → konsoli) =====
 // Esim. await postiTuomari.accounts()
@@ -100,7 +153,11 @@ const debugTools = {
   async setAiEnabled(aiEnabled) {
     return (await saveSettings({ aiEnabled: aiEnabled === true })).aiEnabled;
   },
-  testAi: async () => testAiConnection(await loadState()),
+  testAi: async () => {
+    const state = await loadState();
+    return testAiConnection({ ...state, ...(await resolveApiKey(state.settings)) });
+  },
+  keyStatus: () => keyStatus(),
   // Oletussäännöt, joita ei vielä ole käytössä (id + kategoria), ja yksittäisen lisäys
   async missingDefaultRules() {
     return (await missingDefaultRules()).map((r) => ({ id: r.id, category: r.category, subjectFirst: r.subjectFirst }));
@@ -133,7 +190,7 @@ const debugTools = {
       sortOnStartup: settings.sortOnStartup,
       sortNewMail: settings.sortNewMail,
       aiEnabled: settings.aiEnabled,
-      apiKeySet: Boolean(settings.apiKey),
+      apiKey: (await resolveApiKey(settings)).keyState, // none | plain | locked | unlocked
       accounts: settings.accountIds.length,
       categories: categories.length,
       rules: rules.length,

@@ -66,6 +66,14 @@ export function cleanWord(value) {
   return word;
 }
 
+// Suojattava nimi tai sana (korvataan AI:lle lähtevästä tekstistä merkinnällä [nimi])
+export function cleanProtectedWord(value) {
+  const word = asString(value).replace(/\s+/g, " ").trim();
+  if (word.length < 2) throw new Error("Suojattavan nimen pitää olla vähintään 2 merkkiä");
+  if (word.length > LIMITS.word) throw new Error(`Suojattava nimi on liian pitkä (max ${LIMITS.word})`);
+  return word;
+}
+
 // Tekstikentän sisältö listaksi. Osoitteet ja domainit: erotin rivinvaihto, pilkku,
 // puolipiste tai välilyönti. Otsikkosanat: vain rivinvaihto tai pilkku (sanassa voi olla välilyönti).
 export function splitList(text, { allowSpaces = false } = {}) {
@@ -214,7 +222,7 @@ export function normalizeSettings(input = {}) {
   // Vain tunnetut kentät luetaan; muut (myös __proto__ ja constructor) ohitetaan
   const raw = input && typeof input === "object" && !Array.isArray(input) ? input : {};
 
-  for (const key of ["dryRun", "sortOnStartup", "sortNewMail", "verboseLog", "aiEnabled"]) {
+  for (const key of ["dryRun", "sortOnStartup", "sortNewMail", "verboseLog", "aiEnabled", "sendSenderName", "protectAddressBook"]) {
     if (typeof raw[key] === "boolean") s[key] = raw[key];
   }
 
@@ -234,6 +242,12 @@ export function normalizeSettings(input = {}) {
     s.accountIds = [
       ...new Set(raw.accountIds.slice(0, 100).filter((id) => typeof id === "string" && id.length > 0 && id.length <= 100)),
     ];
+  }
+
+  if (raw.protectedWords !== undefined) {
+    const words = cleanList(raw.protectedWords, cleanProtectedWord, "Suojattavat nimet");
+    s.protectedWords = words.values;
+    errors.push(...words.errors);
   }
 
   if (raw.freemailDomains !== undefined) {

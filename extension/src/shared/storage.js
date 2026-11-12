@@ -179,7 +179,7 @@ export async function renameCategory(oldName, newName) {
     categories: categories.map((c) => (c === oldName ? clean : c)),
     rules: rules.map((r) => (r.category === oldName ? { ...r, category: clean } : r)),
   });
-  return { renamedRules };
+  return { renamedRules, newName: clean };
 }
 
 // Poistaa kategorian ja sitä käyttävät säännöt (asetussivu varoittaa ja kysyy ensin)

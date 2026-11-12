@@ -3,6 +3,7 @@
 // Lähettäjästä kerrotaan vain näyttönimi ja domain, otsikosta osoitteet korvataan.
 import { domainMatches } from "./classify.js";
 import { QUOTES_AND_SPACE, splitAngle, trimChars } from "./text.js";
+import { buildNameMatcher, redactPersonalData } from "./pii.js";
 
 export const ADDRESS_PLACEHOLDER = "[osoite]";
 export const MAX_FROM = 300;
@@ -48,31 +49,70 @@ function cleanDomain(email) {
   return trimChars(email.slice(at + 1).toLowerCase().replace(/[^a-z0-9.-]/g, ""), ".");
 }
 
-// Lähettäjä AI:lle muodossa "Näyttönimi (domain)" tai "yksityishenkilö (domain)".
+// Osoitteet → [osoite], määrä laskuriin
+function redactEmailsCounted(text, counts) {
+  return String(text ?? "").replace(new RegExp(EMAIL_SOURCE, "gu"), () => {
+    counts.email = (counts.email ?? 0) + 1;
+    return ADDRESS_PLACEHOLDER;
+  });
+}
+
+// Osoitteet, henkilötiedot ja suojatut nimet pois tekstistä
+function redactAll(text, nameMatcher, counts) {
+  const { text: clean, counts: found } = redactPersonalData(redactEmailsCounted(text, counts), nameMatcher);
+  for (const [k, n] of Object.entries(found)) counts[k] = (counts[k] ?? 0) + n;
+  return clean;
+}
+
+// Asetukset → anonymisoinnin valinnat
+//   freemailDomains: ilmaisten palveluiden domainit
+//   sendSenderName: lähetetäänkö lähettäjän nimi (oletus ei: vain verkkotunnus)
+//   nameMatcher: suojattavat nimet (buildNameMatcher)
+export function privacyOptions(settings, protectedNames = []) {
+  return {
+    freemailDomains: settings?.freemailDomains ?? [],
+    sendSenderName: settings?.sendSenderName === true,
+    nameMatcher: buildNameMatcher(protectedNames),
+  };
+}
+
+// Lähettäjä AI:lle: oletuksena vain verkkotunnus. Kun nimen lähetys on päällä: "Näyttönimi (domain)".
+// Ilmaisen palvelun lähettäjä on aina "yksityishenkilö (domain)".
 // Osoitteen paikallista osaa (ennen @-merkkiä) ei palauteta koskaan.
-export function toAiSender(author, freemailDomains = []) {
+export function toAiSenderDetailed(author, options = {}) {
+  const { freemailDomains = [], sendSenderName = false, nameMatcher = null } = options;
+  const counts = {};
   const { name: rawName, email } = splitAuthor(author);
   const domain = cleanDomain(email);
 
   if (domain && freemailDomains.some((d) => domainMatches(domain, d))) {
-    return `yksityishenkilö (${domain})`;
+    return { from: `yksityishenkilö (${domain})`, counts };
   }
+  if (!sendSenderName) return { from: domain || "tuntematon", counts };
 
   const name = cleanName(rawName);
+  const safeName = name ? redactAll(name, nameMatcher, counts) : "";
   let result;
-  if (name && domain) result = `${name} (${domain})`;
+  if (safeName && domain) result = `${safeName} (${domain})`;
   else if (domain) result = domain;
-  else if (name) result = name;
+  else if (safeName) result = safeName;
   else result = "tuntematon";
 
-  return redactEmails(result).slice(0, MAX_FROM);
+  return { from: redactEmails(result).slice(0, MAX_FROM), counts };
 }
 
-// Yksi viesti siinä muodossa, jossa se lähtisi AI:lle
-export function toAiMessage(msg, freemailDomains = []) {
-  return {
-    id: String(msg.id),
-    from: toAiSender(msg.author, freemailDomains),
-    subject: redactEmails(msg.subject ?? "").slice(0, MAX_SUBJECT),
-  };
+export function toAiSender(author, options = {}) {
+  return toAiSenderDetailed(author, options).from;
+}
+
+// Yksi viesti siinä muodossa, jossa se lähtisi AI:lle, ja tehdyt korvaukset (esikatselua varten)
+export function toAiMessageDetailed(msg, options = {}) {
+  const sender = toAiSenderDetailed(msg.author, options);
+  const counts = { ...sender.counts };
+  const subject = redactAll(msg.subject ?? "", options.nameMatcher ?? null, counts).slice(0, MAX_SUBJECT);
+  return { message: { id: String(msg.id), from: sender.from, subject }, counts };
+}
+
+export function toAiMessage(msg, options = {}) {
+  return toAiMessageDetailed(msg, options).message;
 }

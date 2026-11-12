@@ -1,7 +1,20 @@
 import { useState } from "react";
 import { addCategory, deleteCategory, moveCategory, renameCategory } from "../../shared/storage.js";
 import { LIMITS } from "../../shared/validate.js";
+import { sendToBackground } from "../../shared/useStore.js";
 import { ConfirmButton, Notice, Section, Status, useStatus } from "../ui.jsx";
+
+// Uudelleennimeämisen tulos: säännöt ja kansiot
+function describeRename(r) {
+  const lines = [r.renamedRules ? `Nimetty uudelleen, ${r.renamedRules} sääntöä päivitetty` : "Nimetty uudelleen"];
+  const f = r.folders?.folders ?? [];
+  const count = (action) => f.filter((x) => x.action === action).length;
+  if (count("rename")) lines.push(r.folders.dryRun ? `Kuivaharjoitus: ${count("rename")} kansiota nimettäisiin uudelleen` : `${count("rename")} kansiota nimetty uudelleen`);
+  if (count("exists")) lines.push(`${count("exists")} tilillä uudella nimellä on jo kansio – vanhaa ei nimetty`);
+  if (count("error")) lines.push(`${count("error")} kansion nimeäminen epäonnistui`);
+  if (f.length && f.every((x) => x.action === "missing")) lines.push("Vanhannimistä kansiota ei ollut");
+  return lines.join("\n");
+}
 
 export function Categories({ categories, rules }) {
   const { status, run } = useStatus();
@@ -20,10 +33,12 @@ export function Categories({ categories, rules }) {
     e.preventDefault();
     const { name, value } = editing;
     if (value.trim() === name) return setEditing(null);
-    const result = await run(
-      () => renameCategory(name, value),
-      (r) => (r.renamedRules ? `Nimetty uudelleen, ${r.renamedRules} sääntöä päivitetty` : "Nimetty uudelleen")
-    );
+    const result = await run(async () => {
+      const renamed = await renameCategory(name, value);
+      // Samanniminen kansio valittujen tilien Saapuneiden alla (kuivaharjoituksessa vain raportti)
+      const folders = await sendToBackground({ type: "renameCategoryFolders", oldName: name, newName: renamed.newName });
+      return { ...renamed, folders };
+    }, describeRename);
     if (result) setEditing(null);
   };
 
@@ -34,8 +49,9 @@ export function Categories({ categories, rules }) {
       description="Kategoriasta tulee kansio Saapuneiden alle. AI saa valita vain näistä kategorioista."
     >
       <Notice kind="info">
-        Uudelleennimeäminen päivittää säännöt, mutta Thunderbirdissä jo olevaa kansiota ei nimetä uudelleen.
-        Uudet viestit menevät uuden nimiseen kansioon.
+        Uudelleennimeäminen päivittää säännöt ja nimeää valittujen tilien Saapuneiden alla olevan samannimisen
+        kansion, jos uudella nimellä ei ole jo kansiota (kuivaharjoituksessa vain kerrotaan, mitä tehtäisiin).
+        Poisto ei koske Thunderbirdin kansioihin: kansio ja sen viestit jäävät paikalleen.
       </Notice>
 
       <ol className="list">
@@ -68,7 +84,7 @@ export function Categories({ categories, rules }) {
                   <button type="button" onClick={() => setEditing({ name, value: name })}>Nimeä</button>
                   <ConfirmButton
                     danger
-                    prompt={count > 0 ? `${count} ${count === 1 ? "sääntö käyttää" : "sääntöä käyttää"} tätä kategoriaa ja ${count === 1 ? "se poistetaan" : "ne poistetaan"} myös.` : null}
+                    prompt={`${count > 0 ? `${count} ${count === 1 ? "sääntö käyttää" : "sääntöä käyttää"} tätä kategoriaa ja ${count === 1 ? "se poistetaan" : "ne poistetaan"} myös. ` : ""}Thunderbirdin kansioon ei kosketa.`}
                     confirmLabel={count > 0 ? `Poista kategoria ja ${count} sääntöä` : "Poista"}
                     onConfirm={() =>
                       run(() => deleteCategory(name), (r) => (r.deletedRules ? `Poistettu, myös ${r.deletedRules} sääntöä` : "Poistettu"))

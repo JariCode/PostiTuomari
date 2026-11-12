@@ -5,7 +5,7 @@ import { EMAIL_BLOCKED_MESSAGE, OPENAI_URL, buildRequestBody, parseAiResponse } 
 import { containsEmail } from "../src/shared/privacy.js";
 
 const categories = ["Raha", "Ostokset"];
-const settings = { apiKey: "testiavain", model: "gpt-4.1-mini", freemailDomains: ["posti.example"] };
+const settings = { apiKey: "testiavain", model: "gpt-4.1-mini", freemailDomains: ["posti.example"], sendSenderName: true };
 const state = { settings, categories };
 
 let calls;

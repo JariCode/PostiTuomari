@@ -27,6 +27,9 @@ export const DEFAULT_SETTINGS = {
   apiKey: "",
   accountIds: [], // oletuksena yhtään tiliä ei lajitella
   freemailDomains: DEFAULT_FREEMAIL_DOMAINS,
+  sendSenderName: false, // false = lähettäjästä lähtee AI:lle vain verkkotunnus
+  protectedWords: [], // omat suojattavat nimet ja sanat → [nimi]
+  protectAddressBook: false, // osoitekirjan nimet → [nimi] (vaatii addressBooks-oikeuden)
 };
 
 // Kategorioiden järjestys asetussivulla ja AI:n vaihtoehdoissa

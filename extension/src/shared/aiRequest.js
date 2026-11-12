@@ -2,11 +2,13 @@
 // jotta esikatselu näyttää täsmälleen saman datan, joka lähtisi.
 import { UNSURE } from "./constants.js";
 import { containsEmail, toAiMessage } from "./privacy.js";
+import { containsHetuOrCard } from "./pii.js";
 
 export const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 export const AI_BATCH_SIZE = 50;
 export const AI_TIMEOUT_MS = 30000;
 export const EMAIL_BLOCKED_MESSAGE = "osoite havaittu, AI-kutsu estetty";
+export const PII_BLOCKED_MESSAGE = "henkilötunnus tai korttinumero havaittu, AI-kutsu estetty";
 
 export const SYSTEM_PROMPT = `Olet sähköpostin lajittelija.
 Saat listan viestejä, joista tiedät vain lähettäjän ja otsikon – et viestin sisältöä.
@@ -21,9 +23,10 @@ export function allowedCategories(categories) {
   return [...categories.filter((c) => c !== UNSURE), UNSURE];
 }
 
-// Thunderbirdin viestit → AI:lle lähtevät { id, from, subject } (anonymisoitu)
-export function toAiMessages(messages, freemailDomains) {
-  return messages.map((m) => toAiMessage(m, freemailDomains));
+// Thunderbirdin viestit → AI:lle lähtevät { id, from, subject } (anonymisoitu).
+// options: privacyOptions(settings, suojattavat nimet)
+export function toAiMessages(messages, options) {
+  return messages.map((m) => toAiMessage(m, options));
 }
 
 // Käyttäjän viestin sisältö: tämä on se data, joka viesteistä lähtee
@@ -71,8 +74,14 @@ export function buildRequestBody(model, categories, aiMessages) {
 }
 
 // Viimeinen varmistus ennen lähetystä: koko JSON tarkistetaan osoitteiden varalta
-export function assertNoEmails(json) {
+// Viimeinen tarkistus koko lähetettävälle JSONille: osoite, henkilötunnus tai korttinumero → ei lähetetä
+export function assertSafeToSend(json) {
   if (containsEmail(json)) throw new Error(EMAIL_BLOCKED_MESSAGE);
+  if (containsHetuOrCard(json)) throw new Error(PII_BLOCKED_MESSAGE);
+}
+
+export function isSafeToSend(json) {
+  return !containsEmail(json) && !containsHetuOrCard(json);
 }
 
 // Tarkistaa AI:n vastauksen: vain pyydetyt id:t ja sallitut kategoriat kelpaavat.

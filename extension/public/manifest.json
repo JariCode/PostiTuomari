@@ -33,5 +33,9 @@
     "messagesMove",
     "storage"
   ],
-  "host_permissions": ["https://api.openai.com/*"]
+  "optional_permissions": ["addressBooks"],
+  "host_permissions": ["https://api.openai.com/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://api.openai.com; base-uri 'none'; form-action 'none'"
+  }
 }

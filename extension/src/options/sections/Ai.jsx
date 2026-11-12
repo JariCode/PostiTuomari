@@ -1,12 +1,20 @@
-import { useState } from "react";
-import { buildRequestBody, buildUserContent, toAiMessages } from "../../shared/aiRequest.js";
+import { useEffect, useState } from "react";
+import { buildRequestBody, buildUserContent, isSafeToSend } from "../../shared/aiRequest.js";
 import { classify, isAiBlocked } from "../../shared/classify.js";
-import { containsEmail } from "../../shared/privacy.js";
+import { PII_LABELS } from "../../shared/pii.js";
+import { privacyOptions, toAiMessageDetailed } from "../../shared/privacy.js";
+import {
+  ADDRESS_BOOK_PERMISSION,
+  addressBookNames,
+  collectProtectedNames,
+  identityNames,
+} from "../../shared/protectedNames.js";
 import { api, saveSettings } from "../../shared/storage.js";
-import { cleanDomain, LIMITS } from "../../shared/validate.js";
-import { ListField } from "../ListField.jsx";
+import { cleanDomain, cleanProtectedWord, LIMITS } from "../../shared/validate.js";
 import { sendToBackground } from "../../shared/useStore.js";
-import { ConfirmButton, Notice, Section, Status, Toggle, useStatus } from "../ui.jsx";
+import { ApiKey } from "../ApiKey.jsx";
+import { ListField } from "../ListField.jsx";
+import { Notice, Section, Status, Toggle, useStatus } from "../ui.jsx";
 
 const MODEL_SUGGESTIONS = ["gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1", "gpt-4o-mini"];
 const PREVIEW_COUNT = 5;
@@ -56,6 +64,11 @@ function sendReason(msg, { rules, aiBlocklist, manualMoves, aiUnsure }) {
   return "lähetettäisiin";
 }
 
+function describeCounts(counts) {
+  const parts = Object.entries(counts).map(([type, n]) => `${PII_LABELS[type] ?? type} ×${n}`);
+  return parts.length ? parts.join(", ") : "ei korvauksia";
+}
+
 function Preview({ data }) {
   const [preview, setPreview] = useState(null);
   const { status, run } = useStatus();
@@ -65,13 +78,15 @@ function Preview({ data }) {
       const { settings, categories } = data;
       if (!settings.accountIds.length) throw new Error("Valitse ensin tili Tilit-osiossa");
       const messages = await latestMessages(settings.accountIds, PREVIEW_COUNT);
-      const aiMessages = toAiMessages(messages, settings.freemailDomains);
+      const options = privacyOptions(settings, await collectProtectedNames(settings));
+      const detailed = messages.map((m) => toAiMessageDetailed(m, options));
+      const aiMessages = detailed.map((d) => d.message);
       const body = JSON.stringify(buildRequestBody(settings.model, categories, aiMessages));
       setPreview({
         content: JSON.stringify(buildUserContent(categories, aiMessages), null, 2),
         body: JSON.stringify(JSON.parse(body), null, 2),
-        reasons: aiMessages.map((m, i) => ({ id: m.id, reason: sendReason(messages[i], data) })),
-        blocked: containsEmail(body),
+        rows: aiMessages.map((m, i) => ({ id: m.id, reason: sendReason(messages[i], data), counts: describeCounts(detailed[i].counts) })),
+        safe: isSafeToSend(body),
         atSigns: (body.match(/@/g) ?? []).length,
       });
     }, null);
@@ -80,26 +95,27 @@ function Preview({ data }) {
     <div className="card subtle">
       <h3>Näin viimeisimmät {PREVIEW_COUNT} viestiä lähetettäisiin OpenAI:lle</h3>
       <Notice kind="info">
-        OpenAI:lle lähtee vain lähettäjän nimi, domain ja otsikko. Sähköpostiosoitteita ja viestien sisältöä ei lähetetä.
-        Otsikossa voi olla henkilötietoja.
+        OpenAI:lle lähtee vain lähettäjän verkkotunnus (ja nimi, jos sallit sen) sekä otsikko. Sähköpostiosoitteet,
+        henkilötunnukset, puhelin-, tili-, kortti- ja rekisterinumerot sekä suojatut nimet korvataan merkinnöillä.
+        Viestien sisältöä ei lähetetä. Otsikossa voi silti olla muita henkilötietoja.
       </Notice>
       <button type="button" onClick={load}>{preview ? "Päivitä esikatselu" : "Näytä esikatselu"}</button>
       <Status status={status} />
       {preview && (
         <>
-          {preview.blocked ? (
-            <Notice kind="danger">Tarkistus löysi sähköpostiosoitteen – tätä pyyntöä ei lähetettäisi.</Notice>
+          {preview.safe ? (
+            <Notice kind="ok">Tarkistus: pyynnössä ei ole sähköpostiosoitteita, henkilötunnuksia eikä korttinumeroita ({preview.atSigns} @-merkkiä).</Notice>
           ) : (
-            <Notice kind="ok">Tarkistus: pyynnössä ei ole sähköpostiosoitteita ({preview.atSigns} @-merkkiä).</Notice>
+            <Notice kind="danger">Tarkistus löysi osoitteen, henkilötunnuksen tai korttinumeron – tätä pyyntöä ei lähetettäisi.</Notice>
           )}
           <pre aria-label="Lähetettävät viestit">{preview.content}</pre>
           <table className="small">
             <thead>
-              <tr><th>id</th><th>Oikeassa lajittelussa</th></tr>
+              <tr><th>id</th><th>Korvattu</th><th>Oikeassa lajittelussa</th></tr>
             </thead>
             <tbody>
-              {preview.reasons.map((r) => (
-                <tr key={r.id}><td>{r.id}</td><td>{r.reason}</td></tr>
+              {preview.rows.map((r) => (
+                <tr key={r.id}><td>{r.id}</td><td>{r.counts}</td><td>{r.reason}</td></tr>
               ))}
             </tbody>
           </table>
@@ -117,63 +133,82 @@ function Preview({ data }) {
   );
 }
 
-// ===== API-avain =====
+// ===== Henkilötietojen suojaus =====
 
-function ApiKey({ settings }) {
-  const [value, setValue] = useState("");
+function NameProtection({ settings }) {
+  const [own, setOwn] = useState(null);
+  const [bookCount, setBookCount] = useState(null);
   const { status, run } = useStatus();
-  const hasKey = Boolean(settings.apiKey);
 
-  const save = async (e) => {
-    e.preventDefault();
-    const key = value.trim();
-    if (!key) return;
-    const ok = await run(() => saveSettings({ apiKey: key }), "API-avain tallennettu");
-    if (ok) setValue("");
-  };
+  useEffect(() => {
+    identityNames().then(setOwn, () => setOwn([]));
+  }, []);
+
+  useEffect(() => {
+    if (!settings.protectAddressBook) return setBookCount(null);
+    addressBookNames().then((names) => setBookCount(names.length), () => setBookCount(0));
+  }, [settings.protectAddressBook]);
+
+  // Oikeus pyydetään vasta, kun käyttäjä kytkee valinnan päälle
+  const toggleAddressBook = (on) =>
+    run(async () => {
+      if (on) {
+        const granted = await api().permissions.request(ADDRESS_BOOK_PERMISSION);
+        if (!granted) throw new Error("Osoitekirjan lukuoikeutta ei myönnetty");
+        await saveSettings({ protectAddressBook: true });
+        return "Osoitekirjan nimet suojataan";
+      }
+      await saveSettings({ protectAddressBook: false });
+      await api().permissions.remove(ADDRESS_BOOK_PERMISSION).catch(() => {});
+      return "Osoitekirjan nimiä ei enää lueta";
+    }, (text) => text);
 
   return (
-    <form onSubmit={save} className="field">
-      <label className="field">
-        <span>API-avain</span>
-        <span className="muted small block">
-          {hasKey ? <>Tallennettu avain: <code>••••{settings.apiKey.slice(-4)}</code></> : "Avainta ei ole tallennettu."}
-        </span>
-        <input
-          type="password"
-          value={value}
-          maxLength={LIMITS.apiKey}
-          autoComplete="off"
-          spellCheck={false}
-          placeholder={hasKey ? "Korvaa uudella avaimella" : "Liitä OpenAI-avain"}
-          onChange={(e) => setValue(e.target.value)}
-        />
-      </label>
-      <p className="muted small">
-        Avain tallennetaan salaamattomana Thunderbird-profiiliin tällä koneella. Käytä rajattua avainta ja aseta
-        projektille budjettiraja.
-      </p>
-      <div className="row">
-        <button type="submit" className="primary" disabled={!value.trim()}>Tallenna avain</button>
-        {hasKey && (
-          <ConfirmButton danger confirmLabel="Poista avain" onConfirm={() => run(() => saveSettings({ apiKey: "" }), "API-avain poistettu")}>
-            Poista avain
-          </ConfirmButton>
+    <div className="card subtle">
+      <h3>Henkilötietojen suojaus</h3>
+      <Toggle
+        label="Lähetä lähettäjän nimi tekoälylle"
+        description="Pois päältä (suositus) lähettäjästä lähtee vain verkkotunnus, esim. kauppa.example. Yritysten lähettäjänimissä on usein henkilön nimi."
+        checked={settings.sendSenderName}
+        onChange={(sendSenderName) => run(() => saveSettings({ sendSenderName }))}
+      />
+      <p className="small">
+        <strong>Oma nimesi suojataan automaattisesti</strong> Thunderbirdin tilien tiedoista:{" "}
+        {own === null ? "haetaan…" : own.length ? (
+          <span className="chips inline">{own.map((n) => <span key={n} className="chip">{n}</span>)}</span>
+        ) : (
+          "tileillä ei ole nimeä"
         )}
-      </div>
+      </p>
+      <ListField
+        label="Suojattavat nimet ja sanat"
+        help="Esim. perheenjäsenten nimet tai muut sanat, joita ei saa lähettää. Yksi per rivi. Korvataan merkinnällä [nimi]."
+        values={settings.protectedWords}
+        cleaner={cleanProtectedWord}
+        allowSpaces
+        onSave={(protectedWords) => saveSettings({ protectedWords })}
+      />
+      <Toggle
+        label="Suojaa myös osoitekirjan nimet"
+        description="Lukee yhteystietojen nimet Thunderbirdin osoitekirjasta. Thunderbird kysyy luvan, kun kytket tämän päälle. Nimiä ei tallenneta mihinkään."
+        checked={settings.protectAddressBook}
+        onChange={toggleAddressBook}
+      />
+      {settings.protectAddressBook && bookCount !== null && <p className="muted small">Osoitekirjasta {bookCount} suojattavaa nimeä.</p>}
       <Status status={status} />
-    </form>
+    </div>
   );
 }
 
 // ===== Osio =====
 
-export function Ai({ data }) {
+export function Ai({ data, keyStatus, setKeyStatus }) {
   const { settings } = data;
   const [model, setModel] = useState(settings.model);
   const [test, setTest] = useState(null);
   const [testing, setTesting] = useState(false);
   const { status, run } = useStatus();
+  const hasKey = keyStatus && keyStatus.state !== "none";
 
   const saveModel = (e) => {
     e.preventDefault();
@@ -200,11 +235,11 @@ export function Ai({ data }) {
     >
       <Toggle
         label="AI-luokittelu käytössä"
-        description={settings.apiKey ? null : "Tarvitsee API-avaimen."}
+        description={hasKey ? null : "Tarvitsee API-avaimen."}
         checked={settings.aiEnabled}
         onChange={(aiEnabled) => run(() => saveSettings({ aiEnabled }), aiEnabled ? "AI käytössä" : "AI pois päältä")}
       />
-      {settings.aiEnabled && !settings.apiKey && <Notice kind="warn">AI on päällä, mutta API-avain puuttuu. Lajittelu käyttää vain sääntöjä.</Notice>}
+      {settings.aiEnabled && keyStatus?.state === "none" && <Notice kind="warn">AI on päällä, mutta API-avain puuttuu. Lajittelu käyttää vain sääntöjä.</Notice>}
 
       <form className="field" onSubmit={saveModel}>
         <label className="field">
@@ -223,10 +258,10 @@ export function Ai({ data }) {
       </form>
       <Status status={status} />
 
-      <ApiKey settings={settings} />
+      <ApiKey keyStatus={keyStatus} setKeyStatus={setKeyStatus} />
 
       <div className="row">
-        <button type="button" onClick={testConnection} disabled={!settings.apiKey || testing}>
+        <button type="button" onClick={testConnection} disabled={!hasKey || testing}>
           {testing ? "Testataan…" : "Testaa yhteys"}
         </button>
         <span className="muted small">Lähettää yhden keksityn esimerkkiviestin samassa muodossa kuin lajittelu.</span>
@@ -238,9 +273,11 @@ export function Ai({ data }) {
         </Notice>
       )}
 
+      <NameProtection settings={settings} />
+
       <ListField
         label="Ilmaiset sähköpostipalvelut"
-        help="Näiden palveluiden lähettäjät ovat yksityishenkilöitä: AI:lle kerrotaan vain ”yksityishenkilö (domain)” ilman nimeä."
+        help="Näiden palveluiden lähettäjät ovat yksityishenkilöitä: AI:lle kerrotaan vain ”yksityishenkilö (domain)”. Lisää myös paikalliset palveluntarjoajat (esim. posti.example)."
         values={settings.freemailDomains}
         cleaner={cleanDomain}
         onSave={(freemailDomains) => saveSettings({ freemailDomains })}
