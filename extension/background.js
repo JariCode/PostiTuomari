@@ -1,6 +1,6 @@
 // ===== Asetukset =====
 const SETTINGS = {
-  dryRun: true, // true = vain kerrotaan, false = siirretään oikeasti
+  dryRun: false, // true = vain kerrotaan, false = siirretään oikeasti
 };
 
 // Omat säännöt ensin, jotta ne voittavat yleiset
