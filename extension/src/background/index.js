@@ -5,7 +5,7 @@ import { UNSURE, FLAGGED_LABEL } from "../shared/constants.js";
 
 // ===== Asetukset =====
 const SETTINGS = {
-  dryRun: false, // true = vain kerrotaan, false = siirretään oikeasti
+  dryRun: true, // true = vain kerrotaan, false = siirretään oikeasti
   ai: {
     enabled: true,
     url: "http://localhost:3001/classify",
