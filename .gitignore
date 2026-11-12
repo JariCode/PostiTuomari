@@ -21,3 +21,5 @@ postituomari-export*.json
 .claude/
 .claude/settings.local.json
 CLAUDE.local.md
+
+*:Zone.Identifier
