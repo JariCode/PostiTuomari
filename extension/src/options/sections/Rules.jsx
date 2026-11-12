@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { addDefaultRule, missingDefaultRules, saveBlocklist, saveRules } from "../../shared/storage.js";
 import { cleanAddress, cleanDomain, normalizeRule, splitList } from "../../shared/validate.js";
 import { ListField } from "../ListField.jsx";
@@ -39,6 +39,15 @@ function RuleEditor({ rule, categories, onSave, onCancel }) {
   const [domains, setDomains] = useState((rule.domains ?? []).join("\n"));
   const [words, setWords] = useState((rule.subjectWords ?? []).join("\n"));
   const [errors, setErrors] = useState([]);
+  const formRef = useRef(null);
+
+  // Lomake näkyviin ja kursori ensimmäiseen kenttään aina kun se avataan
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
+    form.querySelector("select, input, textarea")?.focus({ preventScroll: true });
+  }, []);
 
   const submit = (e) => {
     e.preventDefault();
@@ -57,7 +66,7 @@ function RuleEditor({ rule, categories, onSave, onCancel }) {
   };
 
   return (
-    <form className="rule-editor card" onSubmit={submit}>
+    <form ref={formRef} className="rule-editor card" onSubmit={submit}>
       <h3>{rule.id ? "Muokkaa sääntöä" : "Uusi sääntö"}</h3>
 
       <label className="field">
@@ -234,11 +243,18 @@ export function Rules({ rules, categories, aiBlocklist }) {
         </div>
         <input type="search" placeholder="Hae säännöistä" aria-label="Hae säännöistä" value={filter} onChange={(e) => setFilter(e.target.value)} className="search" />
         <span className="spacer" />
-        <button type="button" className="primary" disabled={!categories.length} onClick={() => setEditing({})}>Uusi sääntö</button>
+        <button type="button" className="primary" disabled={!categories.length} onClick={() => setEditing({ openedAt: Date.now() })}>Uusi sääntö</button>
       </div>
 
       {editing && (
-        <RuleEditor rule={editing} categories={categories} onSave={saveRule} onCancel={() => setEditing(null)} />
+        // key: jokainen avaus luo lomakkeen uudelleen (kentät alusta ja vieritys näkyviin)
+        <RuleEditor
+          key={editing.openedAt}
+          rule={editing}
+          categories={categories}
+          onSave={saveRule}
+          onCancel={() => setEditing(null)}
+        />
       )}
       <Status status={status} />
 
@@ -255,7 +271,7 @@ export function Rules({ rules, categories, aiBlocklist }) {
               <h3>{category} <span className="badge">{list.length}</span></h3>
               <ul className="rules">
                 {list.map((r) => (
-                  <RuleCard key={r.id} rule={r} position={position.get(r.id)} onEdit={() => setEditing(r)} onDelete={() => remove(r.id)} />
+                  <RuleCard key={r.id} rule={r} position={position.get(r.id)} onEdit={() => setEditing({ ...r, openedAt: Date.now() })} onDelete={() => remove(r.id)} />
                 ))}
               </ul>
             </div>
@@ -271,7 +287,7 @@ export function Rules({ rules, categories, aiBlocklist }) {
                 rule={r}
                 position={i + 1}
                 showCategory
-                onEdit={() => setEditing(r)}
+                onEdit={() => setEditing({ ...r, openedAt: Date.now() })}
                 onDelete={() => remove(r.id)}
                 onMove={(delta) => move(i, delta)}
                 canUp={i > 0}
