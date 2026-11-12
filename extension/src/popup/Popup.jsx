@@ -71,8 +71,9 @@ async function createSenderRule(author, category, type) {
     if (settings.freemailDomains.some((d) => domainMatches(domain, d))) {
       throw new Error("Ilmaiselle sähköpostipalvelulle ei tehdä domain-sääntöä");
     }
-    if (rules.some((r) => r.match === "any" && r.domains.includes(domain))) return "Domainille on jo sääntö";
-  } else if (rules.some((r) => r.match === "any" && r.addresses.includes(email))) {
+    // Tarkka vertailu: sama domain on jo jonkin säännön listalla
+    if (rules.some((r) => r.match === "any" && r.domains.some((d) => d === domain))) return "Domainille on jo sääntö";
+  } else if (rules.some((r) => r.match === "any" && r.addresses.some((a) => a === email))) {
     return "Osoitteelle on jo sääntö";
   }
 

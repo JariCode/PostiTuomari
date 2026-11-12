@@ -18,7 +18,7 @@ test("lainausmerkit nimen ympäriltä poistetaan", () => {
 
 test("ilmainen palvelu: yksityishenkilö ilman nimeä", () => {
   assert.equal(toAiSender("Henkilö Esimerkki <henkilo@posti.example>", FREEMAIL), "yksityishenkilö (posti.example)");
-  assert.ok(DEFAULT_FREEMAIL_DOMAINS.includes("gmail.com"));
+  assert.ok(new Set(DEFAULT_FREEMAIL_DOMAINS).has("gmail.com"));
   assert.equal(toAiSender("henkilo@posti.example", FREEMAIL), "yksityishenkilö (posti.example)");
   // Alidomain ja isot kirjaimet
   assert.equal(toAiSender("Joku <X@Mail.Posti.Example>", FREEMAIL), "yksityishenkilö (mail.posti.example)");
