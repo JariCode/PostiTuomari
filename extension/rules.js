@@ -19,7 +19,10 @@ const RULES = [
   },
   {
     category: "Työnhaku",
-    subjectWords: ["työhakemus", "haastattelu", "rekrytointi", "job application", "työpaikka"],
+    subjectWords: [
+      "työhakemus", "hakemuksesi", "haastattelu", "rekrytoi",
+      "job application", "your application", "työpaikka",
+    ],
   },
   {
     category: "Opiskelu",
