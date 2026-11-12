@@ -3,7 +3,17 @@
 import { addDefaultRule, api, ensureDefaults, loadState, missingDefaultRules, saveSettings } from "../shared/storage.js";
 import { applyImport, parseImport } from "../shared/transfer.js";
 import { testAiConnection } from "./ai.js";
-import { handleMoved, handleNewMail, loadMemory, logAccounts, restoreFlagged, sortInboxes, watchMemory } from "./sort.js";
+import {
+  handleMoved,
+  handleNewMail,
+  listUnsorted,
+  loadMemory,
+  logAccounts,
+  moveToCategory,
+  restoreFlagged,
+  sortInboxes,
+  watchMemory,
+} from "./sort.js";
 
 // Oletukset ja muistit ladataan ennen kuin yksikään kuuntelija tekee mitään
 const ready = (async () => {
@@ -56,6 +66,13 @@ api().runtime.onMessage.addListener((message, sender) => {
       return ready.then(() => sortInboxes());
     case "restoreFlagged":
       return ready.then(() => restoreFlagged({ preview: message.preview === true }));
+    case "listUnsorted":
+      return ready.then(() => listUnsorted({ limit: 100 }));
+    case "moveToCategory":
+      if (typeof message.messageId !== "number" || typeof message.category !== "string") {
+        return Promise.reject(new Error("Virheellinen pyyntö"));
+      }
+      return ready.then(() => moveToCategory(message.messageId, message.category));
     case "testAi":
       return ready.then(async () => testAiConnection(await loadState()));
     default:

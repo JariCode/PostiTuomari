@@ -1,5 +1,5 @@
 import { APP_NAME } from "../shared/constants.js";
-import { useStore } from "./useStore.js";
+import { useStore } from "../shared/useStore.js";
 import { Accounts } from "./sections/Accounts.jsx";
 import { Ai } from "./sections/Ai.jsx";
 import { Categories } from "./sections/Categories.jsx";

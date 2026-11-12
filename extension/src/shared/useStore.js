@@ -1,7 +1,7 @@
 // Asetussivun tila storage.localista. Päivittyy automaattisesti, kun tausta tai toinen
 // välilehti muuttaa tallennettua dataa.
 import { useCallback, useEffect, useState } from "react";
-import { api, loadState } from "../shared/storage.js";
+import { api, loadState } from "./storage.js";
 
 export function useStore() {
   const [data, setData] = useState(null);
@@ -10,11 +10,16 @@ export function useStore() {
   const reload = useCallback(async () => {
     try {
       const state = await loadState();
-      const { manualMoves = {}, aiUnsure = {} } = await api().storage.local.get(["manualMoves", "aiUnsure"]);
+      const { manualMoves = {}, aiUnsure = {}, lastRun = null } = await api().storage.local.get([
+        "manualMoves",
+        "aiUnsure",
+        "lastRun",
+      ]);
       setData({
         ...state,
         manualMoves,
         aiUnsure,
+        lastRun,
         manualCount: Object.keys(manualMoves).length,
         unsureCount: Object.keys(aiUnsure).length,
       });

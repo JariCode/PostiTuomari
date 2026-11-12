@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, clearMemory, loadState } from "../../shared/storage.js";
 import { applyImport, buildExport, parseImport } from "../../shared/transfer.js";
-import { sendToBackground } from "../useStore.js";
+import { sendToBackground } from "../../shared/useStore.js";
 import { ConfirmButton, Errors, Notice, Section, Status, useStatus } from "../ui.jsx";
 
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;

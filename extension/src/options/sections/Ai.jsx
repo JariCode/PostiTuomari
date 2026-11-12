@@ -5,7 +5,7 @@ import { containsEmail } from "../../shared/privacy.js";
 import { api, saveSettings } from "../../shared/storage.js";
 import { cleanDomain, LIMITS } from "../../shared/validate.js";
 import { ListField } from "../ListField.jsx";
-import { sendToBackground } from "../useStore.js";
+import { sendToBackground } from "../../shared/useStore.js";
 import { ConfirmButton, Notice, Section, Status, Toggle, useStatus } from "../ui.jsx";
 
 const MODEL_SUGGESTIONS = ["gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1", "gpt-4o-mini"];

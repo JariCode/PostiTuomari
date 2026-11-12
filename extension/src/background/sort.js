@@ -195,8 +195,13 @@ async function askAI(messages, state) {
 
 // ===== Saapuneiden lajittelu =====
 
+// Yhteenveto tallennetaan popupia varten (vain määrät, ei viestien tietoja)
 export function sortInboxes() {
-  return exclusive(doSortInboxes);
+  return exclusive(async () => {
+    const summary = await doSortInboxes();
+    await api().storage.local.set({ lastRun: summary });
+    return summary;
+  });
 }
 
 // Käy saapuneet läpi, kerää siirtosuunnitelman ja toteuttaa sen (ellei dryRun).
@@ -383,6 +388,62 @@ export async function handleMoved(originalMessages, movedMessages) {
   }
 
   if (changed) await saveManualMoves();
+}
+
+// ===== Saapuneisiin jääneet (popupin Epävarmat) =====
+
+function messageTime(msg) {
+  const t = msg.date instanceof Date ? msg.date.getTime() : Date.parse(msg.date);
+  return Number.isFinite(t) ? t : 0;
+}
+
+// Valittujen tilien Saapuneiden viestit, joihin mikään sääntö ei osu (uusimmat ensin).
+// reason: "unsure" = AI ei osannut päättää, "blocked" = ei AI:lle, "norule" = ei sääntöä
+export async function listUnsorted({ limit = 100 } = {}) {
+  const { settings, rules, aiBlocklist } = await loadState();
+  const inboxes = await getIncludedInboxes(settings);
+  const items = [];
+
+  for (const inbox of inboxes) {
+    for await (const msg of getMessages(inbox.id)) {
+      if (isFlagged(msg) || isManual(msg) || classify(msg, rules)) continue;
+      items.push({
+        id: msg.id,
+        author: msg.author ?? "",
+        subject: msg.subject ?? "",
+        date: messageTime(msg),
+        inbox: `${inbox.name} (${inbox.accountId})`,
+        reason: isAiBlocked(msg, aiBlocklist) ? "blocked" : isKnownUnsure(msg) ? "unsure" : "norule",
+      });
+    }
+  }
+
+  items.sort((a, b) => b.date - a.date);
+  return { total: items.length, items: items.slice(0, limit) };
+}
+
+// Käyttäjän valinta popupista: viesti kategoriakansioon ja muistiin käsin lajiteltuna.
+// Tehdään myös kuivaharjoituksessa, koska käyttäjä valitsee kansion itse.
+export function moveToCategory(messageId, category) {
+  return exclusive(async () => {
+    const { categories } = await loadState();
+    if (!categories.includes(category)) throw new Error("Tuntematon kategoria");
+
+    const msg = await api().messages.get(messageId);
+    if (!msg) throw new Error("Viestiä ei löydy");
+    if (!msg.folder?.specialUse?.includes("inbox")) throw new Error("Viesti ei ole enää Saapuneissa");
+
+    const target = await getTargetFolder(msg.folder.id, category);
+    await moveMessages([msg], target);
+
+    if (msg.headerMessageId) {
+      memory.manualMoves[msg.headerMessageId] = target.path ?? "";
+      delete memory.aiUnsure[msg.headerMessageId];
+      await api().storage.local.set({ manualMoves: memory.manualMoves, aiUnsure: memory.aiUnsure });
+    }
+    console.log(`🖐️ Siirretty popupista → ${category}`);
+    return { folder: target.name };
+  });
 }
 
 // ===== Liputettujen palautus =====
