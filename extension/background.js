@@ -9,6 +9,33 @@ const ALL_RULES = [
   ...RULES,
 ];
 
+// ===== Lajiteltavat tilit =====
+
+// Tilien nimet rules.local.js:stä – jos puuttuu, mitään ei lajitella
+const INCLUDED_ACCOUNT_NAMES =
+  typeof LOCAL_SETTINGS !== "undefined" ? LOCAL_SETTINGS.accounts ?? [] : [];
+
+let includedAccountIds = new Set();
+
+async function loadIncludedAccounts() {
+  const accounts = await messenger.accounts.list(false);
+
+  includedAccountIds = new Set(
+    accounts
+      .filter((a) => INCLUDED_ACCOUNT_NAMES.includes(a.name))
+      .map((a) => a.id)
+  );
+
+  for (const a of accounts) {
+    const status = includedAccountIds.has(a.id) ? "✅ Lajitellaan" : "⏭️ Ohitetaan";
+    console.log(`${status}: ${a.name} (${a.id})`);
+  }
+
+  if (includedAccountIds.size === 0) {
+    console.warn("⚠️ Yhtään tiliä ei ole valittu – lisää tilin nimi rules.local.js:n LOCAL_SETTINGS.accounts-listaan");
+  }
+}
+
 // ===== Viestilistat =====
 
 // Käy läpi MessageList-olion kaikki sivut
@@ -146,7 +173,9 @@ async function moveMessages(messages, targetFolder) {
 
 // Käy saapuneet läpi, kerää siirtosuunnitelman ja toteuttaa sen (ellei dryRun)
 async function sortInboxes() {
-  const inboxes = await messenger.folders.query({ specialUse: ["inbox"] });
+  const allInboxes = await messenger.folders.query({ specialUse: ["inbox"] });
+  const inboxes = allInboxes.filter((i) => includedAccountIds.has(i.accountId));
+
   const stats = {};
   const unmatchedDomains = {};
   const plan = new Map();       // "inboxId|kategoria" → [viestit]
@@ -215,7 +244,8 @@ async function sortInboxes() {
 
 // ===== Käynnistys =====
 async function init() {
-  await loadManualMoves(); // muisti ladataan ennen lajittelua
+  await loadIncludedAccounts(); // mitkä tilit lajitellaan
+  await loadManualMoves();      // muisti ladataan ennen lajittelua
   await sortInboxes();
 }
 
@@ -223,7 +253,8 @@ init().catch(console.error);
 
 // ===== Uusi posti =====
 messenger.messages.onNewMailReceived.addListener(async (folder, messageList) => {
-  // Lajitellaan vain saapuneisiin tullut posti (ei esim. roskapostia)
+  // Vain valitut tilit ja vain saapuneisiin tullut posti
+  if (!includedAccountIds.has(folder.accountId)) return;
   if (!folder.specialUse?.includes("inbox")) return;
 
   for (const msg of messageList.messages) {
