@@ -7,7 +7,7 @@ import { UNSURE, FLAGGED_LABEL } from "../shared/constants.js";
 const SETTINGS = {
   dryRun: true, // true = vain kerrotaan, false = siirretään oikeasti
   ai: {
-    enabled: true,
+    enabled: false, // pois, kunnes lähettäjän anonymisointi on valmis (vaihe 3)
     url: "http://localhost:3001/classify",
     batchSize: 50,    // sama kuin backendin MAX_MESSAGES
     timeoutMs: 30000, // kauanko backendin vastausta odotetaan
