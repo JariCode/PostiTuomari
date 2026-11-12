@@ -37,6 +37,11 @@ const RULES = [
     subjectWords: ["verotus", "verokortti", "veropäätös"],
   },
   {
+    // Ennen Rahaa, ettei "vakuutuslasku" osu ensin sanaan "lasku"
+    category: "Vakuutukset",
+    subjectWords: ["vakuutus", "vahinkoilmoitus", "korvaushakemus"],
+  },
+  {
     category: "Raha",
     subjectWords: ["lasku", "eräpäivä", "maksumuistutus", "laina"],
   },

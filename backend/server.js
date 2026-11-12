@@ -18,6 +18,7 @@ const openai = new OpenAI(); // lukee OPENAI_API_KEY:n ympäristöstä
 const SYSTEM_PROMPT = `Olet sähköpostin lajittelija.
 Saat listan viestejä, joista tiedät vain lähettäjän ja otsikon – et viestin sisältöä.
 Valitse jokaiselle viestille täsmälleen yksi kategoria annetusta listasta.
+Älä päättele kategoriaa pelkästä yrityksen tai lähettäjän nimestä – otsikon pitää tukea valintaa.
 Jos lähettäjä ja otsikko eivät riitä varmaan päätökseen, valitse "${UNSURE}". Älä arvaa.
 Palauta jokaiselle viestille sen id muuttamattomana.`;
 
@@ -63,6 +64,7 @@ async function classifyWithAI(categories, messages) {
 
   const completion = await openai.chat.completions.create({
     model: MODEL,
+    temperature: 0, // sama syöte → sama vastaus
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: JSON.stringify({ categories: allowed, messages }) },
