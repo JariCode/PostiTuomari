@@ -2,6 +2,7 @@
 // taustaskriptissä, jotta storage.localissa on aina siistiä dataa.
 import { UNSURE } from "./constants.js";
 import { DEFAULT_SETTINGS } from "./defaults.js";
+import { trimChars } from "./text.js";
 
 export const LIMITS = {
   category: 50,
@@ -37,7 +38,9 @@ export function cleanCategory(value) {
 }
 
 export function cleanAddress(value) {
-  const address = asString(value).toLowerCase().replace(/\s+/g, "").replace(/^mailto:/, "").replace(/^<|>$/g, "");
+  let address = trimChars(asString(value).toLowerCase().replace(/\s+/g, ""), "<>");
+  if (address.startsWith("mailto:")) address = address.slice("mailto:".length);
+  // Lopullinen tarkistus on tiukka ADDRESS_RE, joten jäljelle ei voi jäädä kulmasulkeita tms.
   if (!address) throw new Error("Osoite ei voi olla tyhjä");
   if (address.length > LIMITS.address) throw new Error("Osoite on liian pitkä");
   if (!ADDRESS_RE.test(address)) throw new Error(`Virheellinen osoite: ${address}`);
@@ -45,7 +48,8 @@ export function cleanAddress(value) {
 }
 
 export function cleanDomain(value) {
-  const domain = asString(value).toLowerCase().replace(/\s+/g, "").replace(/^(\*\.|@|\.)+/, "").replace(/\.$/, "");
+  // "*.kauppa.example", "@kauppa.example" ja ".kauppa.example." → "kauppa.example"
+  const domain = trimChars(asString(value).toLowerCase().replace(/\s+/g, ""), "*@.");
   if (!domain) throw new Error("Domain ei voi olla tyhjä");
   if (domain.length > LIMITS.domain) throw new Error("Domain on liian pitkä");
   if (!DOMAIN_RE.test(domain)) throw new Error(`Virheellinen domain: ${domain}`);

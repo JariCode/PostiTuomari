@@ -3,6 +3,7 @@ import { APP_NAME, FLAGGED_LABEL } from "../shared/constants.js";
 import { domainMatches, getDomain, parseEmail } from "../shared/classify.js";
 import { api, loadState, saveRules } from "../shared/storage.js";
 import { sendToBackground, useStore } from "../shared/useStore.js";
+import { splitAngle } from "../shared/text.js";
 import { normalizeRule } from "../shared/validate.js";
 
 const REASONS = {
@@ -15,10 +16,11 @@ function formatTime(at) {
   return new Date(at).toLocaleString("fi-FI", { dateStyle: "short", timeStyle: "short" });
 }
 
-// "Nimi <osoite>" → { name, email }
+// "Nimi <osoite>" → { name, email }. Nimi = osa ennen ensimmäistä "<"-merkkiä, ilman regexiä.
+// Teksti näytetään Reactilla (ei innerHTML:ää).
 function splitSender(author) {
   const email = parseEmail(author);
-  const name = String(author ?? "").replace(/<[^>]*>/, "").replace(/^["'\s]+|["'\s]+$/g, "").trim();
+  const { name } = splitAngle(author);
   return { name: name && name.toLowerCase() !== email ? name : "", email };
 }
 

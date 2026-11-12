@@ -2,6 +2,7 @@
 // AI:lle ei koskaan lähetetä sähköpostiosoitetta eikä viestin sisältöä.
 // Lähettäjästä kerrotaan vain näyttönimi ja domain, otsikosta osoitteet korvataan.
 import { domainMatches } from "./classify.js";
+import { QUOTES_AND_SPACE, splitAngle, trimChars } from "./text.js";
 
 export const ADDRESS_PLACEHOLDER = "[osoite]";
 export const MAX_FROM = 300;
@@ -22,22 +23,19 @@ export function containsEmail(text) {
 
 // Erottaa näyttönimen ja osoitteen: "Nimi <osoite>", pelkkä osoite tai pelkkä nimi
 function splitAuthor(author) {
+  const angle = splitAngle(author);
+  if (angle.bracketed) return { name: angle.name, email: angle.email };
+
+  // Ei kulmasulkeita: etsitään osoite tekstistä ja loput on nimi
   const s = String(author ?? "").trim();
-
-  const bracketed = s.match(/^(.*?)\s*<([^<>]*)>\s*$/);
-  if (bracketed) return { name: bracketed[1], email: bracketed[2].trim() };
-
-  const found = s.match(new RegExp(EMAIL_SOURCE, "u"));
-  if (found) return { name: s.replace(found[0], ""), email: found[0] };
+  const found = new RegExp(EMAIL_SOURCE, "u").exec(s);
+  if (found) return { name: s.slice(0, found.index) + s.slice(found.index + found[0].length), email: found[0] };
 
   return { name: s, email: "" };
 }
 
 function cleanName(raw) {
-  const name = String(raw ?? "")
-    .replace(/^["'\s]+|["'\s]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const name = trimChars(raw, QUOTES_AND_SPACE).replace(/\s+/g, " ");
   // Nimi, joka on itse osoite tai sisältää @-merkin, jätetään kokonaan pois
   if (!name || name.includes("@")) return "";
   return redactEmails(name).slice(0, MAX_NAME).trim();
@@ -46,7 +44,8 @@ function cleanName(raw) {
 function cleanDomain(email) {
   const at = email.lastIndexOf("@");
   if (at === -1) return "";
-  return email.slice(at + 1).toLowerCase().replace(/[^a-z0-9.-]/g, "").replace(/^\.+|\.+$/g, "");
+  // Sallitut merkit (a–z, 0–9, piste, viiva) ja reunojen pisteet pois
+  return trimChars(email.slice(at + 1).toLowerCase().replace(/[^a-z0-9.-]/g, ""), ".");
 }
 
 // Lähettäjä AI:lle muodossa "Näyttönimi (domain)" tai "yksityishenkilö (domain)".
