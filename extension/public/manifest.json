@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PostiTuomari",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Lajittelee postin lähettäjän ja otsikon perusteella",
   "icons": {
     "32": "icons/postituomari.svg",
