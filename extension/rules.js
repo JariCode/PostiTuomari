@@ -29,6 +29,10 @@ const RULES = [
     subjectWords: ["kurssi", "opinnot"],
   },
   {
+    category: "Terveys",
+    subjectWords: ["ajanvaraus", "laboratorio", "resepti", "lääkäri", "hammaslääkäri"],
+  },
+  {
     category: "Viranomaiset",
     subjectWords: ["verotus", "verokortti", "veropäätös"],
   },
