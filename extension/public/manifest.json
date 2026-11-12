@@ -12,6 +12,15 @@
   "background": {
     "scripts": ["rules.js", "rules.local.js", "background.js"]
   },
+  "options_ui": {
+    "page": "options/index.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_title": "PostiTuomari",
+    "default_label": "PostiTuomari",
+    "default_popup": "popup/index.html"
+  },
   "permissions": [
     "accountsRead",
     "accountsFolders",

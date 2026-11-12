@@ -1,3 +1,8 @@
+import { UNSURE, FLAGGED_LABEL } from "../shared/constants.js";
+
+// RULES, LOCAL_RULES ja LOCAL_SETTINGS tulevat manifestissa ennen tätä ladattavista
+// tiedostoista rules.js ja rules.local.js (siirtyvät storage.local:iin vaiheessa 2).
+
 // ===== Asetukset =====
 const SETTINGS = {
   dryRun: false, // true = vain kerrotaan, false = siirretään oikeasti
@@ -8,8 +13,6 @@ const SETTINGS = {
     timeoutMs: 30000, // kauanko backendin vastausta odotetaan
   },
 };
-
-const UNSURE = "Epävarma";
 
 // Omat säännöt ensin, jotta ne voittavat yleiset
 const ALL_RULES = [
@@ -86,9 +89,16 @@ function isManual(msg) {
   return Boolean(msg.headerMessageId) && Object.hasOwn(manualMoves, msg.headerMessageId);
 }
 
+// ===== Liputetut =====
+
+// Liputettu (tähdellä merkitty) viesti pysyy aina Saapuneissa
+function isFlagged(msg) {
+  return msg.flagged === true;
+}
+
 // ===== Sääntöluokittelu =====
 
-// "Nimi <osoite@domain.fi>" → "osoite@domain.fi"
+// "Nimi <henkilo@example.com>" → "henkilo@example.com"
 function parseEmail(author = "") {
   const match = author.match(/<([^>]+)>/);
   return (match ? match[1] : author).trim().toLowerCase();
@@ -245,6 +255,12 @@ async function sortInboxes() {
     console.log(`📥 ${label}`);
 
     for await (const msg of getMessages(inbox.id)) {
+      // Liputetut pysyvät aina Saapuneissa – ei sääntöjä, ei AI:ta
+      if (isFlagged(msg)) {
+        stats[FLAGGED_LABEL] = (stats[FLAGGED_LABEL] ?? 0) + 1;
+        continue;
+      }
+
       // Käsin lajiteltuihin ei kosketa
       if (isManual(msg)) {
         stats["(käsin lajiteltu)"] = (stats["(käsin lajiteltu)"] ?? 0) + 1;
@@ -339,6 +355,12 @@ messenger.messages.onNewMailReceived.addListener(async (folder, messageList) => 
   if (!folder.specialUse?.includes("inbox")) return;
 
   for (const msg of messageList.messages) {
+    // Liputetut pysyvät aina Saapuneissa
+    if (isFlagged(msg)) {
+      console.log(`⭐ ${FLAGGED_LABEL}, ei siirretä | ${msg.author} | ${msg.subject}`);
+      continue;
+    }
+
     const verdict = classify(msg);
     logVerdict(msg, verdict);
 

@@ -6,3 +6,15 @@ dist/
 
 # Henkilökohtaiset säännöt – ei koskaan GitHubiin
 extension/rules.local.js
+
+# Omat tiedostot, paketit ja viennit
+private/
+*.xpi
+extension/dist/
+*.local.json
+postituomari-export*.json
+
+# Claude Coden paikalliset tiedostot
+.claude/
+.claude/settings.local.json
+CLAUDE.local.md
