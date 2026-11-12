@@ -7,6 +7,7 @@ import {
   ensureDefaults,
   loadState,
   missingDefaultRules,
+  removeDuplicateRules,
   renameCategory,
 } from "../src/shared/storage.js";
 
@@ -61,6 +62,38 @@ test("addDefaultRule: Vakuutukset menee laskusäännön edelle", async () => {
   });
   assert.equal((await addDefaultRule("default-vakuutukset")).added, true);
   assert.deepEqual(store.rules.map((r) => r.id), ["t", "default-vakuutukset", "default-raha-laskut", "oma"]);
+});
+
+test("addDefaultRule: sama sääntö ilman etusijaa korvataan, ei tuplaa", async () => {
+  const store = mockStorage({
+    rules: [
+      { id: "t", category: "Tilit ja tietoturva", subjectFirst: true, subjectWords: ["salasana"] },
+      { id: "laskut", category: "Raha", subjectFirst: true, subjectWords: ["lasku", "eräpäivä", "maksumuistutus"] },
+      { id: "vanha-vak", category: "Vakuutukset", subjectWords: ["vakuutus", "vahinkoilmoitus", "korvaushakemus"] },
+    ],
+    categories: ["Raha", "Vakuutukset"],
+  });
+  const missing = await missingDefaultRules();
+  assert.equal(missing.find((r) => r.id === "default-vakuutukset").upgrade, true);
+
+  const result = await addDefaultRule("default-vakuutukset");
+  assert.equal(result.upgraded, true);
+  assert.deepEqual(store.rules.map((r) => r.id), ["t", "default-vakuutukset", "laskut"]);
+  assert.equal(store.rules.filter((r) => r.category === "Vakuutukset").length, 1);
+  // Laskusääntö tunnistettiin oletukseksi sisällön perusteella, joten sitä ei tarjota uudelleen
+  assert.ok(!(await missingDefaultRules()).some((r) => r.id === "default-raha-laskut"));
+});
+
+test("removeDuplicateRules poistaa tuplat", async () => {
+  const store = mockStorage({
+    categories: ["Raha"],
+    rules: [
+      { id: "a", category: "Raha", domains: ["pankki.example"] },
+      { id: "b", category: "Raha", domains: ["pankki.example"] },
+    ],
+  });
+  assert.deepEqual(await removeDuplicateRules(), { removedRules: 1, removedValues: 0 });
+  assert.deepEqual(store.rules.map((r) => r.id), ["a"]);
 });
 
 test("kategorian nimeäminen päivittää säännöt, poisto poistaa säännöt", async () => {

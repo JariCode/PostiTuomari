@@ -52,9 +52,18 @@ export function Summary({ lastRun }) {
             <th>{lastRun.dryRun ? "Siirtyisi yhteensä" : "Siirtyi yhteensä"}</th>
             <td className="num">{total}</td>
           </tr>
-          <tr><td>{FLAGGED_LABEL}</td><td className="num">{c.flagged ?? 0}</td></tr>
-          <tr><td>Käsin lajiteltu</td><td className="num">{c.manual ?? 0}</td></tr>
-          <tr><td>Jäi luokittelematta</td><td className="num">{c.unmatched ?? 0}</td></tr>
+          {c.aiClassified > 0 && (
+            <tr><td className="muted">– josta AI luokitteli</td><td className="num muted">{c.aiClassified}</td></tr>
+          )}
+          <tr><td>{FLAGGED_LABEL} (pysyy Saapuneissa)</td><td className="num">{c.flagged ?? 0}</td></tr>
+          <tr><td>Käsin lajiteltu (ei kosketa)</td><td className="num">{c.manual ?? 0}</td></tr>
+          <tr>
+            <td>
+              Jäi Saapuneisiin
+              <span className="muted block">ei sääntöä eikä AI-kategoriaa</span>
+            </td>
+            <td className="num">{c.unmatched ?? 0}</td>
+          </tr>
           <tr><td>AI</td><td className="num">{lastRun.ai}</td></tr>
         </tbody>
       </table>
@@ -177,21 +186,39 @@ function Unsorted({ data, refreshKey }) {
   }, [load, refreshKey]);
 
   const done = (id, note) => {
-    setList((l) => ({ total: l.total - 1, items: l.items.filter((i) => i.id !== id) }));
+    setList((l) => {
+      const item = l.items.find((i) => i.id === id);
+      const byReason = { ...l.byReason };
+      if (item && byReason[item.reason] > 0) byReason[item.reason]--;
+      return { total: l.total - 1, byReason, items: l.items.filter((i) => i.id !== id) };
+    });
     setNotes((n) => [note, ...n].slice(0, 3));
   };
+
+  const r = list?.byReason;
 
   return (
     <div className="unsorted">
       <div className="row">
-        <strong>Epävarmat</strong>
+        <strong>Saapuneissa ilman sääntöä</strong>
         {list && <span className="badge">{list.total}</span>}
         <span className="spacer" />
         <button type="button" className="link small" onClick={load}>Päivitä</button>
       </div>
+      {r && list.total > 0 && (
+        <div className="row small">
+          <span className="badge accent">AI epävarma {r.unsure}</span>
+          <span className="badge">ei AI:lle {r.blocked}</span>
+          <span className="badge">muut {r.norule}</span>
+        </div>
+      )}
       <p className="muted small">
-        Saapuneisiin jääneet, joihin mikään sääntö ei osu. Valittu siirto tehdään aina (myös kuivaharjoituksessa) ja
-        merkitään käsin lajitelluksi.
+        Kaikki Saapuneissa nyt olevat viestit, joihin mikään sääntö ei osu. Luku voi olla suurempi kuin
+        ”Jäi Saapuneisiin”: mukana ovat myös viestit, jotka AI luokitteli viime ajossa mutta joita ei siirretty
+        (kuivaharjoitus), sekä ajon jälkeen tulleet.
+      </p>
+      <p className="muted small">
+        Valittu siirto tehdään aina (myös kuivaharjoituksessa) ja merkitään käsin lajitelluksi.
       </p>
       {notes.map((n, i) => (
         <div key={i} className="notice ok small">{n}</div>

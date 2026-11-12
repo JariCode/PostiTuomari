@@ -7,6 +7,7 @@
 //   manualMoves  – headerMessageId → kansion polku, johon käyttäjä viestin siirsi
 //   aiUnsure     – headerMessageId → aikaleima: AI ei osannut päättää, ei kysytä uudelleen
 import { DEFAULT_AI_BLOCKLIST, DEFAULT_CATEGORIES, DEFAULT_RULE_TEMPLATES } from "./defaults.js";
+import { analyzeDuplicates, sameContent } from "./duplicates.js";
 import { cleanCategory, normalizeBlocklist, normalizeCategories, normalizeRules, normalizeSettings } from "./validate.js";
 
 export const SCHEMA_VERSION = 1;
@@ -80,30 +81,31 @@ export async function saveBlocklist(raw) {
   return blocklist;
 }
 
-// Onko oletussääntö jo käytössä: sama id tai sama sisältö (tuodut säännöt saavat uudet id:t)
-function sameRule(a, b) {
-  const words = (r) => [...r.subjectWords].sort().join("|");
-  return (
-    a.id === b.id ||
-    (a.category === b.category &&
-      a.match === b.match &&
-      a.subjectFirst === b.subjectFirst &&
-      a.addresses.length === 0 &&
-      a.domains.length === 0 &&
-      words(a) === words(b))
-  );
+// ===== Oletussäännöt =====
+
+// Kattaako olemassa oleva sääntö r oletussäännön d: sama id, tai sama kategoria, osumatapa ja
+// etusija ja kaikki d:n arvot ovat r:ssä (tuodut säännöt saavat uudet id:t).
+function covers(r, d) {
+  if (r.id === d.id) return true;
+  if (r.category !== d.category || r.match !== d.match || r.subjectFirst !== d.subjectFirst) return false;
+  return ["addresses", "domains", "subjectWords"].every((f) => d[f].every((v) => r[f].includes(v)));
 }
 
-// Oletussäännöt, joita tallennetuissa säännöissä ei vielä ole
+// Oletussäännöt, joita ei vielä ole käytössä.
+// upgrade: true = sama sääntö on jo olemassa ilman etusijaa (tai etusijalla) ja se korvataan.
 export async function missingDefaultRules() {
   const { rules } = await loadState();
-  return createDefaultRules().filter((d) => !rules.some((r) => sameRule(d, r)));
+  return createDefaultRules()
+    .filter((d) => !rules.some((r) => covers(r, d)))
+    .map((d) => ({ ...d, upgrade: rules.some((r) => sameContent(r, d)) }));
 }
 
-// Lisää yhden oletussäännön olemassa oleviin sääntöihin ilman muiden sääntöjen muuttamista.
-// Sijainti oletusjärjestyksen mukaan: ennen seuraavaa samaan vaiheeseen kuuluvaa oletussääntöä,
-// joka on jo käytössä (esim. Vakuutukset ennen laskusääntöä). Muuten etusijasääntö
-// viimeisen etusijasäännön perään ja muut loppuun.
+// Lisää yhden oletussäännön olemassa oleviin sääntöihin.
+// - Jos sama sääntö on jo olemassa eri etusijalla, se korvataan (ei tuplaa).
+// - Sijainti oletusjärjestyksen mukaan: ennen seuraavaa samaan vaiheeseen kuuluvaa oletussääntöä,
+//   joka on jo käytössä (esim. Vakuutukset ennen laskusääntöä). Muuten etusijasääntö viimeisen
+//   etusijasäännön perään ja muut loppuun.
+// - Lopuksi poistetaan tuplat ja päällekkäiset arvot (lopputulos lajittelussa ei muutu).
 export async function addDefaultRule(id) {
   const defaults = createDefaultRules();
   const index = defaults.findIndex((r) => r.id === id);
@@ -111,12 +113,13 @@ export async function addDefaultRule(id) {
   const rule = defaults[index];
 
   const { rules, categories } = await loadState();
-  if (rules.some((r) => sameRule(rule, r))) return { added: false, rules: rules.length };
+  if (rules.some((r) => covers(r, rule))) return { added: false, upgraded: false, rules: rules.length, removedRules: 0, removedValues: 0 };
 
-  const next = [...rules];
+  const upgraded = rules.some((r) => sameContent(r, rule));
+  const next = rules.filter((r) => !sameContent(r, rule));
   let position = -1;
   for (const later of defaults.slice(index + 1).filter((d) => d.subjectFirst === rule.subjectFirst)) {
-    position = next.findIndex((r) => sameRule(later, r));
+    position = next.findIndex((r) => covers(r, later));
     if (position !== -1) break;
   }
 
@@ -129,10 +132,25 @@ export async function addDefaultRule(id) {
     next.push(rule);
   }
 
-  const update = { rules: next };
+  const cleanup = analyzeDuplicates(next);
+  const update = { rules: cleanup.rules };
   if (!categories.includes(rule.category)) update.categories = [...categories, rule.category];
   await api().storage.local.set(update);
-  return { added: true, rules: next.length };
+  return {
+    added: true,
+    upgraded,
+    rules: cleanup.rules.length,
+    removedRules: cleanup.removedRules,
+    removedValues: cleanup.removedValues,
+  };
+}
+
+// Poistaa tuplasäännöt ja päällekkäiset arvot
+export async function removeDuplicateRules() {
+  const { rules } = await loadState();
+  const cleanup = analyzeDuplicates(rules);
+  await api().storage.local.set({ rules: cleanup.rules });
+  return { removedRules: cleanup.removedRules, removedValues: cleanup.removedValues };
 }
 
 // ===== Kategoriat =====

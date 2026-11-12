@@ -10,6 +10,7 @@
 //            match: "any" (oletus, myös jos kenttä puuttuu) tai "all" (lähettäjä JA otsikko)
 //   "aiBlocklist": { "addresses": [], "domains": [] }
 // }
+import { analyzeDuplicates } from "./duplicates.js";
 import { api } from "./storage.js";
 import { LIMITS, normalizeBlocklist, normalizeCategories, normalizeRules, normalizeSettings } from "./validate.js";
 
@@ -64,6 +65,14 @@ export function parseImport(data) {
     rules.push(rule);
   }
 
+  // Tuonti ei luo tuplia: samat säännöt ja päällekkäiset arvot pois (lajittelu ei muutu)
+  const cleanup = analyzeDuplicates(rules);
+  if (cleanup.removedRules || cleanup.removedValues) {
+    warnings.push(
+      `Tuplat siivottiin: ${cleanup.removedRules} sääntöä ja ${cleanup.removedValues} päällekkäistä arvoa poistettiin (lajittelun lopputulos ei muutu)`
+    );
+  }
+
   const block = normalizeBlocklist(data.aiBlocklist ?? {});
   errors.push(...block.errors);
 
@@ -84,7 +93,7 @@ export function parseImport(data) {
         .map((n) => n.trim())
     : [];
 
-  return { categories, rules, aiBlocklist: block.blocklist, settings, accountNames, errors, warnings };
+  return { categories, rules: cleanup.rules, aiBlocklist: block.blocklist, settings, accountNames, errors, warnings };
 }
 
 // Tallentaa tuonnin. Tilit valitaan nimen perusteella vain tuonnissa – tallennukseen menee accountId.

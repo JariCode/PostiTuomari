@@ -46,5 +46,6 @@ body {
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 label.inline { display: inline-flex; gap: 0.3rem; align-items: center; cursor: pointer; }
 .notice { margin: 0; }
+.block { display: block; }
 .crash { padding: 0.75rem; }
 .crash pre { white-space: pre-wrap; word-break: break-word; max-height: 12rem; }

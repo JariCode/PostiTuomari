@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { addDefaultRule, missingDefaultRules, saveBlocklist, saveRules } from "../../shared/storage.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FIELD_LABELS, analyzeDuplicates } from "../../shared/duplicates.js";
+import { addDefaultRule, missingDefaultRules, removeDuplicateRules, saveBlocklist, saveRules } from "../../shared/storage.js";
 import { cleanAddress, cleanDomain, normalizeRule, splitList } from "../../shared/validate.js";
 import { ListField } from "../ListField.jsx";
 import { ConfirmButton, Errors, Notice, Section, Status, useStatus } from "../ui.jsx";
@@ -156,6 +157,65 @@ function RuleCard({ rule, position, onEdit, onDelete, onMove, canUp, canDown, sh
   );
 }
 
+// ===== Tuplat =====
+
+function Duplicates({ rules }) {
+  const analysis = useMemo(() => analyzeDuplicates(rules), [rules]);
+  const [open, setOpen] = useState(false);
+  const { status, run } = useStatus();
+  const position = new Map(rules.map((r, i) => [r.id, i + 1]));
+  const ruleCount = analysis.removedRules;
+  const valueCount = analysis.removedValues;
+
+  if (!analysis.duplicates.length && !analysis.redundant.length) return <Status status={status} />;
+
+  return (
+    <Notice kind="warn">
+      <strong>Säännöissä on tuplia:</strong> {ruleCount} turhaa sääntöä ja {valueCount} päällekkäistä arvoa.
+      Ne eivät muuta lajittelua, mutta tekevät listasta sekavan.{" "}
+      <button type="button" className="link" onClick={() => setOpen((o) => !o)}>
+        {open ? "Piilota" : "Näytä mitä poistetaan"}
+      </button>
+      {open && (
+        <ul className="small">
+          {analysis.duplicates.flatMap(({ keep, remove }) =>
+            remove.map((r) => (
+              <li key={`d-${r.id}`}>
+                Sääntö #{position.get(r.id)} ({r.category}) on sama kuin #{position.get(keep.id)} – poistetaan
+              </li>
+            ))
+          )}
+          {analysis.redundant.map(({ rule, field, values }) => (
+            <li key={`v-${rule.id}-${field}`}>
+              Sääntö #{position.get(rule.id)} ({rule.category}): {FIELD_LABELS[field]} {values.map((v) => `”${v}”`).join(", ")} on jo
+              säännössä, joka tarkistetaan ensin – poistetaan tästä
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="row">
+        <ConfirmButton
+          confirmLabel={`Poista ${ruleCount} sääntöä ja ${valueCount} arvoa`}
+          prompt="Lajittelun lopputulos ei muutu."
+          onConfirm={() =>
+            run(removeDuplicateRules, (r) => `Poistettu ${r.removedRules} sääntöä ja ${r.removedValues} päällekkäistä arvoa`)
+          }
+        >
+          Poista tuplat
+        </ConfirmButton>
+      </div>
+      <Status status={status} />
+    </Notice>
+  );
+}
+
+function defaultRuleResult(r) {
+  if (!r.added) return "Sääntö on jo käytössä";
+  const parts = [r.upgraded ? "Oletussääntö korvasi saman säännön" : "Oletussääntö lisätty"];
+  if (r.removedRules || r.removedValues) parts.push(`tuplia siivottiin: ${r.removedRules} sääntöä, ${r.removedValues} arvoa`);
+  return parts.join(", ");
+}
+
 // ===== Puuttuvat oletussäännöt =====
 
 function DefaultRules({ rules }) {
@@ -170,7 +230,10 @@ function DefaultRules({ rules }) {
   return (
     <div className="card subtle">
       <h3>Oletussäännöt, joita ei ole käytössä</h3>
-      <p className="muted small">Lisää yksittäinen oletussääntö muuttamatta omia sääntöjäsi. Se sijoitetaan oletusjärjestyksen mukaiseen kohtaan.</p>
+      <p className="muted small">
+        Lisää yksittäinen oletussääntö. Se sijoitetaan oletusjärjestyksen mukaiseen kohtaan. Jos samoja sanoja on jo
+        saman kategorian säännössä, päällekkäisyydet siivotaan samalla (lajittelun lopputulos ei muutu).
+      </p>
       <ul className="list">
         {missing.map((r) => (
           <li key={r.id} className="list-item">
@@ -178,7 +241,10 @@ function DefaultRules({ rules }) {
               <strong>{r.category}</strong> {ruleBadges(r)}{" "}
               <span className="muted small">{r.subjectWords.join(", ")}</span>
             </span>
-            <button type="button" onClick={() => run(() => addDefaultRule(r.id), "Oletussääntö lisätty")}>Lisää</button>
+            {r.upgrade && <span className="muted small">korvaa saman säännön, jonka etusija on eri</span>}
+            <button type="button" onClick={() => run(() => addDefaultRule(r.id), defaultRuleResult)}>
+              {r.upgrade ? "Korvaa" : "Lisää"}
+            </button>
           </li>
         ))}
       </ul>
@@ -257,6 +323,8 @@ export function Rules({ rules, categories, aiBlocklist }) {
         />
       )}
       <Status status={status} />
+
+      <Duplicates rules={rules} />
 
       {orphans.length > 0 && (
         <Notice kind="warn">{orphans.length} sääntöä käyttää kategoriaa, jota ei ole kategorialistalla. Lisää kategoria tai muokkaa sääntöä.</Notice>

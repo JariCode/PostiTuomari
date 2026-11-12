@@ -252,7 +252,8 @@ async function doSortInboxes() {
   const inboxes = await getIncludedInboxes(settings);
 
   const stats = {};
-  const counts = { flagged: 0, manual: 0, unmatched: 0, aiBlocked: 0, aiKnownUnsure: 0 };
+  // unmatched = jäi Saapuneisiin (ei sääntöä eikä AI-kategoriaa), aiClassified = AI antoi kategorian
+  const counts = { flagged: 0, manual: 0, unmatched: 0, aiClassified: 0, aiUnsure: 0, aiBlocked: 0, aiKnownUnsure: 0 };
   const unmatchedDomains = {};
   const unmatched = []; // [{ msg, inboxId }]
   const plan = new Map(); // "inboxId|kategoria" → [viestit]
@@ -324,6 +325,8 @@ async function doSortInboxes() {
     const category = ai.verdicts.get(String(msg.id));
     if (!category) continue;
     aiStats[category] = (aiStats[category] ?? 0) + 1;
+    if (category === UNSURE) counts.aiUnsure++;
+    else counts.aiClassified++;
     detail(`🤖 ${category} | ${msg.author} | ${msg.subject}`);
     // Epävarmat jäävät Saapuneisiin
     if (category !== UNSURE) addToPlan(plan, inboxId, category, msg);
@@ -460,7 +463,9 @@ export async function listUnsorted({ limit = 100 } = {}) {
   }
 
   items.sort((a, b) => b.date - a.date);
-  return { total: items.length, items: items.slice(0, limit) };
+  const byReason = { unsure: 0, blocked: 0, norule: 0 };
+  for (const item of items) byReason[item.reason]++;
+  return { total: items.length, byReason, items: items.slice(0, limit) };
 }
 
 // Käyttäjän valinta popupista: viesti kategoriakansioon ja muistiin käsin lajiteltuna.
