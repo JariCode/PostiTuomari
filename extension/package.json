@@ -1,13 +1,14 @@
 {
   "name": "postituomari",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "Thunderbird-laajennus, joka lajittelee postin lähettäjän ja otsikon perusteella",
   "scripts": {
     "dev": "node scripts/build.mjs --watch",
     "build": "node scripts/build.mjs",
-    "package": "node scripts/build.mjs && node scripts/package.mjs"
+    "package": "node scripts/build.mjs && node scripts/package.mjs",
+    "test": "node --test test/"
   },
   "dependencies": {
     "react": "19.2.0",

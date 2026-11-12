@@ -8,7 +8,7 @@
 //      joten se toimii Thunderbird 128+:n MV3:ssa ilman "type": "module" -asetusta.
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
-import { rmSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
+import { rmSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -77,14 +77,5 @@ const background = {
 
 await build(pages);
 await build(background);
-
-// Väliaikainen (poistuu vaiheessa 2): omat säännöt kopioidaan distiin, jos tiedosto on olemassa.
-// dist/ on .gitignoressa, joten kopio ei päädy Gittiin.
-const localRules = resolve(root, "rules.local.js");
-if (existsSync(localRules)) {
-  copyFileSync(localRules, resolve(dist, "rules.local.js"));
-} else {
-  console.warn("⚠️ rules.local.js puuttuu – kopioi rules.local.example.js ja täytä omilla tiedoilla");
-}
 
 if (watch) console.log("👀 Seurataan muutoksia – dist/ päivittyy automaattisesti");

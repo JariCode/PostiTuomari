@@ -1,0 +1,207 @@
+// Syötteiden tarkistus ja normalisointi. Käytetään asetussivulla, tuonnissa ja
+// taustaskriptissä, jotta storage.localissa on aina siistiä dataa.
+import { UNSURE } from "./constants.js";
+import { DEFAULT_SETTINGS } from "./defaults.js";
+
+export const LIMITS = {
+  category: 50,
+  categories: 30, // AI:n enum pysyy kohtuullisena
+  address: 254,
+  domain: 253,
+  word: 100,
+  listItems: 500,
+  rules: 1000,
+  model: 64,
+  apiKey: 300,
+};
+
+const ADDRESS_RE = /^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+const DOMAIN_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const MODEL_RE = /^[A-Za-z0-9._:-]+$/;
+
+function asString(value) {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+// ===== Yksittäiset arvot: palauttavat siistityn arvon tai heittävät virheen =====
+
+export function cleanCategory(value) {
+  const name = asString(value).replace(/\s+/g, " ").trim();
+  if (!name) throw new Error("Kategorian nimi ei voi olla tyhjä");
+  if (name.length > LIMITS.category) throw new Error(`Kategorian nimi on liian pitkä (max ${LIMITS.category})`);
+  if (/[/\\]/.test(name)) throw new Error("Kategorian nimessä ei voi olla / tai \\ -merkkiä");
+  if (name.toLowerCase() === UNSURE.toLowerCase()) throw new Error(`"${UNSURE}" on varattu nimi`);
+  return name;
+}
+
+export function cleanAddress(value) {
+  const address = asString(value).toLowerCase().replace(/\s+/g, "").replace(/^mailto:/, "").replace(/^<|>$/g, "");
+  if (!address) throw new Error("Osoite ei voi olla tyhjä");
+  if (address.length > LIMITS.address) throw new Error("Osoite on liian pitkä");
+  if (!ADDRESS_RE.test(address)) throw new Error(`Virheellinen osoite: ${address}`);
+  return address;
+}
+
+export function cleanDomain(value) {
+  const domain = asString(value).toLowerCase().replace(/\s+/g, "").replace(/^(\*\.|@|\.)+/, "").replace(/\.$/, "");
+  if (!domain) throw new Error("Domain ei voi olla tyhjä");
+  if (domain.length > LIMITS.domain) throw new Error("Domain on liian pitkä");
+  if (!DOMAIN_RE.test(domain)) throw new Error(`Virheellinen domain: ${domain}`);
+  return domain;
+}
+
+// Otsikkosanat verrataan pienillä kirjaimilla, joten tallennetaan pienillä
+export function cleanWord(value) {
+  const word = asString(value).replace(/\s+/g, " ").trim().toLowerCase();
+  if (!word) throw new Error("Otsikkosana ei voi olla tyhjä");
+  if (word.length > LIMITS.word) throw new Error(`Otsikkosana on liian pitkä (max ${LIMITS.word})`);
+  return word;
+}
+
+// ===== Listat =====
+
+// Siistii listan, poistaa tuplat. Virheelliset arvot jätetään pois ja kerätään errors-listaan.
+export function cleanList(values, cleaner, label = "") {
+  const result = [];
+  const errors = [];
+  const list = Array.isArray(values) ? values : values == null ? [] : [values];
+
+  for (const value of list) {
+    try {
+      const clean = cleaner(value);
+      if (!result.includes(clean)) result.push(clean);
+    } catch (err) {
+      errors.push(label ? `${label}: ${err.message}` : err.message);
+    }
+  }
+
+  if (result.length > LIMITS.listItems) {
+    errors.push(`${label || "Lista"}: liian monta arvoa (max ${LIMITS.listItems})`);
+    result.length = LIMITS.listItems;
+  }
+  return { values: result, errors };
+}
+
+export function newId() {
+  return globalThis.crypto?.randomUUID?.() ?? `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// ===== Sääntö =====
+
+// Palauttaa { rule, errors }. rule on null, jos sääntöä ei voi käyttää.
+export function normalizeRule(raw) {
+  const errors = [];
+  let category = null;
+
+  try {
+    category = cleanCategory(raw?.category);
+  } catch (err) {
+    errors.push(err.message);
+  }
+
+  const addresses = cleanList(raw?.addresses, cleanAddress, "Osoitteet");
+  const domains = cleanList(raw?.domains, cleanDomain, "Domainit");
+  const subjectWords = cleanList(raw?.subjectWords, cleanWord, "Otsikkosanat");
+  errors.push(...addresses.errors, ...domains.errors, ...subjectWords.errors);
+
+  if (!category) return { rule: null, errors };
+
+  const rule = {
+    id: typeof raw?.id === "string" && raw.id.length > 0 && raw.id.length <= 64 ? raw.id : newId(),
+    category,
+    subjectFirst: raw?.subjectFirst === true,
+    addresses: addresses.values,
+    domains: domains.values,
+    subjectWords: subjectWords.values,
+  };
+
+  if (!rule.addresses.length && !rule.domains.length && !rule.subjectWords.length) {
+    errors.push(`Säännössä "${category}" ei ole yhtään osoitetta, domainia tai otsikkosanaa`);
+    return { rule: null, errors };
+  }
+  return { rule, errors };
+}
+
+// Sääntölista: tuplat id:t uusitaan, virheelliset jätetään pois
+export function normalizeRules(rawRules) {
+  const rules = [];
+  const errors = [];
+  const ids = new Set();
+
+  (Array.isArray(rawRules) ? rawRules : []).slice(0, LIMITS.rules).forEach((raw, index) => {
+    const { rule, errors: ruleErrors } = normalizeRule(raw);
+    errors.push(...ruleErrors.map((e) => `Sääntö ${index + 1}: ${e}`));
+    if (!rule) return;
+    if (ids.has(rule.id)) rule.id = newId();
+    ids.add(rule.id);
+    rules.push(rule);
+  });
+
+  return { rules, errors };
+}
+
+// ===== Kategoriat =====
+
+export function normalizeCategories(rawCategories) {
+  const { values, errors } = cleanList(rawCategories, cleanCategory, "Kategoriat");
+  // Samannimiset eri kirjainkoolla ovat sama kansio
+  const seen = new Set();
+  const categories = values.filter((c) => {
+    const key = c.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (categories.length > LIMITS.categories) {
+    errors.push(`Liian monta kategoriaa (max ${LIMITS.categories})`);
+    categories.length = LIMITS.categories;
+  }
+  return { categories, errors };
+}
+
+// ===== AI-kieltolista =====
+
+export function normalizeBlocklist(raw) {
+  const addresses = cleanList(raw?.addresses, cleanAddress, "Kieltolistan osoitteet");
+  const domains = cleanList(raw?.domains, cleanDomain, "Kieltolistan domainit");
+  return {
+    blocklist: { addresses: addresses.values, domains: domains.values },
+    errors: [...addresses.errors, ...domains.errors],
+  };
+}
+
+// ===== Asetukset =====
+
+// Yhdistää tallennetut asetukset oletuksiin ja hylkää väärän tyyppiset arvot
+export function normalizeSettings(raw = {}) {
+  const s = { ...DEFAULT_SETTINGS };
+  const errors = [];
+
+  for (const key of ["dryRun", "sortOnStartup", "sortNewMail", "aiEnabled"]) {
+    if (typeof raw[key] === "boolean") s[key] = raw[key];
+  }
+
+  if (raw.model !== undefined) {
+    const model = asString(raw.model).trim();
+    if (model && model.length <= LIMITS.model && MODEL_RE.test(model)) s.model = model;
+    else errors.push("Virheellinen mallin nimi");
+  }
+
+  if (raw.apiKey !== undefined) {
+    const key = asString(raw.apiKey).trim();
+    if (key.length <= LIMITS.apiKey && !/\s/.test(key)) s.apiKey = key;
+    else errors.push("Virheellinen API-avain");
+  }
+
+  if (Array.isArray(raw.accountIds)) {
+    s.accountIds = [...new Set(raw.accountIds.filter((id) => typeof id === "string" && id.length > 0 && id.length <= 100))];
+  }
+
+  if (raw.freemailDomains !== undefined) {
+    const freemail = cleanList(raw.freemailDomains, cleanDomain, "Ilmaiset palvelut");
+    s.freemailDomains = freemail.values;
+    errors.push(...freemail.errors);
+  }
+
+  return { settings: s, errors };
+}

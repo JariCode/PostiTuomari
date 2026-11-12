@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PostiTuomari",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Lajittelee postin lähettäjän ja otsikon perusteella",
   "browser_specific_settings": {
     "gecko": {
@@ -10,7 +10,7 @@
     }
   },
   "background": {
-    "scripts": ["rules.js", "rules.local.js", "background.js"]
+    "scripts": ["background.js"]
   },
   "options_ui": {
     "page": "options/index.html",
