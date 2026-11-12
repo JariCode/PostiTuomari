@@ -2,51 +2,86 @@
 import { FLAGGED_LABEL, UNSURE } from "../shared/constants.js";
 import { classify, getDomain, isAiBlocked, parseEmail } from "../shared/classify.js";
 import { api, loadState } from "../shared/storage.js";
+import { MAX_MEMORY_ENTRIES, hasEntry, pruneMemory, setEntry } from "../shared/memory.js";
 import { classifyWithAI } from "./ai.js";
 
 const MANUAL_LABEL = "(käsin lajiteltu)";
 const NO_RULE_LABEL = "(ei sääntöä)";
 
+// ===== Loki =====
+
+// Ilman yksityiskohtaista lokia konsoliin kirjoitetaan vain määrät, kategoriat ja virheet –
+// ei lähettäjiä, otsikoita, tilien nimiä eikä domaineja.
+let verboseLog = false;
+
+export function setVerbose(settings) {
+  verboseLog = settings?.verboseLog === true;
+}
+
+function detail(...args) {
+  if (verboseLog) console.log(...args);
+}
+
+function detailTable(title, rows) {
+  if (!verboseLog) return;
+  console.log(title);
+  console.table(rows);
+}
+
 // ===== Muistit =====
 
-// manualMoves: headerMessageId → kansion polku, johon käyttäjä viestin siirsi
-// aiUnsure:    headerMessageId → aikaleima, AI ei osannut päättää
+// manualMoves: headerMessageId → { path, at }: käyttäjän siirtämä viesti (vanhoissa pelkkä polku)
+// aiUnsure:    headerMessageId → aikaleima: AI ei osannut päättää
+// Molemmat rajataan MAX_MEMORY_ENTRIES uusimpaan merkintään.
 export const memory = { manualMoves: {}, aiUnsure: {} };
 
 // Laajennuksen itse siirtämät viestit, jotta ne erotetaan käsin siirretyistä
 export const movingNow = new Set();
 
 export async function loadMemory() {
-  const data = await api().storage.local.get(["manualMoves", "aiUnsure"]);
-  memory.manualMoves = data.manualMoves ?? {};
-  memory.aiUnsure = data.aiUnsure ?? {};
+  const data = await api().storage.local.get(["manualMoves", "aiUnsure", "settings"]);
+  setVerbose(data.settings);
+  memory.manualMoves = pruneMemory(data.manualMoves);
+  memory.aiUnsure = pruneMemory(data.aiUnsure);
+  // Liian suuret vanhat muistit rajataan heti
+  const sizes = [Object.keys(data.manualMoves ?? {}).length, Object.keys(data.aiUnsure ?? {}).length];
+  if (sizes[0] > MAX_MEMORY_ENTRIES || sizes[1] > MAX_MEMORY_ENTRIES) {
+    await api().storage.local.set({ manualMoves: memory.manualMoves, aiUnsure: memory.aiUnsure });
+  }
   console.log(`🖐️ Käsin lajiteltuja muistissa: ${Object.keys(memory.manualMoves).length}`);
   console.log(`❔ Epävarmoja muistissa: ${Object.keys(memory.aiUnsure).length}`);
 }
 
-// Asetussivun tyhjennykset ym. päivittyvät muistiin heti
+// Asetussivun tyhjennykset ja asetusmuutokset päivittyvät heti
 export function watchMemory() {
   api().storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes.manualMoves) memory.manualMoves = changes.manualMoves.newValue ?? {};
     if (changes.aiUnsure) memory.aiUnsure = changes.aiUnsure.newValue ?? {};
+    if (changes.settings) setVerbose(changes.settings.newValue);
   });
 }
 
 export async function saveManualMoves() {
+  memory.manualMoves = pruneMemory(memory.manualMoves);
   await api().storage.local.set({ manualMoves: memory.manualMoves });
 }
 
 async function saveAiUnsure() {
+  memory.aiUnsure = pruneMemory(memory.aiUnsure);
   await api().storage.local.set({ aiUnsure: memory.aiUnsure });
 }
 
+function rememberManual(msg, path) {
+  setEntry(memory.manualMoves, msg.headerMessageId, { path: path ?? "", at: Date.now() });
+}
+
 function isManual(msg) {
-  return Boolean(msg.headerMessageId) && Object.hasOwn(memory.manualMoves, msg.headerMessageId);
+  return hasEntry(memory.manualMoves, msg.headerMessageId);
 }
 
 function isKnownUnsure(msg) {
-  return Boolean(msg.headerMessageId) && Object.hasOwn(memory.aiUnsure, msg.headerMessageId);
+  return hasEntry(memory.aiUnsure, msg.headerMessageId);
 }
 
 // Liputettu (tähdellä merkitty) viesti pysyy aina Saapuneissa
@@ -59,8 +94,11 @@ export function isFlagged(msg) {
 export async function logAccounts(settings) {
   const accounts = await api().accounts.list(false);
   const included = new Set(settings.accountIds);
+  // Tilin nimi on usein sähköpostiosoite → vain yksityiskohtaisessa lokissa
   for (const a of accounts) {
-    console.log(`${included.has(a.id) ? "✅ Lajitellaan" : "⏭️ Ohitetaan"}: ${a.name} (${a.id})`);
+    const status = included.has(a.id) ? "✅ Lajitellaan" : "⏭️ Ohitetaan";
+    if (verboseLog) console.log(`${status}: ${a.name} (${a.id})`);
+    else console.log(`${status}: ${a.id}`);
   }
   if (included.size === 0) {
     console.warn("⚠️ Yhtään tiliä ei ole valittu – valitse lajiteltavat tilit asetussivulla");
@@ -146,9 +184,10 @@ function addToPlan(plan, inboxId, category, msg) {
   plan.get(planKey).push(msg);
 }
 
+// Viestikohtainen rivi vain yksityiskohtaisessa lokissa (sisältää lähettäjän ja otsikon)
 function logVerdict(msg, verdict) {
   const target = verdict ? `${verdict.category} (${verdict.reason})` : "— ei sääntöä";
-  console.log(`⚖️ ${target} | ${msg.author} | ${msg.subject}`);
+  detail(`⚖️ ${target} | ${msg.author} | ${msg.subject}`);
 }
 
 // ===== Yksi kerrallaan =====
@@ -179,7 +218,7 @@ async function askAI(messages, state) {
     let unsureChanged = false;
     for (const msg of messages) {
       if (verdicts.get(String(msg.id)) === UNSURE && msg.headerMessageId) {
-        memory.aiUnsure[msg.headerMessageId] = Date.now();
+        setEntry(memory.aiUnsure, msg.headerMessageId, Date.now());
         unsureChanged = true;
       }
     }
@@ -209,6 +248,7 @@ export function sortInboxes() {
 async function doSortInboxes() {
   const state = await loadState();
   const { settings, rules, aiBlocklist } = state;
+  setVerbose(settings);
   const inboxes = await getIncludedInboxes(settings);
 
   const stats = {};
@@ -262,10 +302,8 @@ async function doSortInboxes() {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 30)
     .map(([domain, count]) => ({ domain, count }));
-  if (top.length) {
-    console.log("🔍 Eniten luokittelemattomia lähettäjiä:");
-    console.table(top);
-  }
+  // Lähettäjien domainit vain yksityiskohtaisessa lokissa
+  if (top.length) detailTable("🔍 Eniten luokittelemattomia lähettäjiä:", top);
 
   // 2. AI niille, joille ei löytynyt sääntöä – paitsi kieltolistalla olevat ja jo epävarmoiksi todetut
   const aiCandidates = unmatched.filter(({ msg }) => {
@@ -286,7 +324,7 @@ async function doSortInboxes() {
     const category = ai.verdicts.get(String(msg.id));
     if (!category) continue;
     aiStats[category] = (aiStats[category] ?? 0) + 1;
-    console.log(`🤖 ${category} | ${msg.author} | ${msg.subject}`);
+    detail(`🤖 ${category} | ${msg.author} | ${msg.subject}`);
     // Epävarmat jäävät Saapuneisiin
     if (category !== UNSURE) addToPlan(plan, inboxId, category, msg);
   }
@@ -329,6 +367,7 @@ async function doSortInboxes() {
 export async function handleNewMail(folder, messageList) {
   const state = await loadState();
   const { settings, rules, aiBlocklist } = state;
+  setVerbose(settings);
 
   if (!settings.sortNewMail) return;
   // Vain valitut tilit ja vain saapuneisiin tullut posti
@@ -338,7 +377,8 @@ export async function handleNewMail(folder, messageList) {
   for await (const msg of iterateList(messageList)) {
     // Liputetut pysyvät aina Saapuneissa
     if (isFlagged(msg)) {
-      console.log(`⭐ ${FLAGGED_LABEL}, ei siirretä | ${msg.author} | ${msg.subject}`);
+      console.log(`⭐ ${FLAGGED_LABEL}, ei siirretä`);
+      detail(`⭐ ${msg.author} | ${msg.subject}`);
       continue;
     }
 
@@ -350,7 +390,7 @@ export async function handleNewMail(folder, messageList) {
     if (!category && !isAiBlocked(msg, aiBlocklist) && !isKnownUnsure(msg)) {
       const ai = await askAI([msg], state);
       const aiCategory = ai.verdicts.get(String(msg.id));
-      if (aiCategory) console.log(`🤖 ${aiCategory} | ${msg.author} | ${msg.subject}`);
+      if (aiCategory) detail(`🤖 ${aiCategory} | ${msg.author} | ${msg.subject}`);
       if (aiCategory && aiCategory !== UNSURE) category = aiCategory;
     }
 
@@ -382,9 +422,10 @@ export async function handleMoved(originalMessages, movedMessages) {
     if (movingNow.delete(msg.headerMessageId)) continue;
 
     // Käyttäjän siirto → muistetaan, ettei lajittelu siirrä sitä takaisin
-    memory.manualMoves[msg.headerMessageId] = msg.folder?.path ?? "";
+    rememberManual(msg, msg.folder?.path);
     changed = true;
-    console.log(`🖐️ Käsin siirretty, muistetaan: "${msg.subject}" → ${msg.folder?.name}`);
+    console.log(`🖐️ Käsin siirretty, muistetaan → ${msg.folder?.name}`);
+    detail(`🖐️ "${msg.subject}"`);
   }
 
   if (changed) await saveManualMoves();
@@ -426,20 +467,25 @@ export async function listUnsorted({ limit = 100 } = {}) {
 // Tehdään myös kuivaharjoituksessa, koska käyttäjä valitsee kansion itse.
 export function moveToCategory(messageId, category) {
   return exclusive(async () => {
-    const { categories } = await loadState();
+    const { categories, settings } = await loadState();
     if (!categories.includes(category)) throw new Error("Tuntematon kategoria");
 
     const msg = await api().messages.get(messageId);
     if (!msg) throw new Error("Viestiä ei löydy");
+    // Vain lajiteltaviksi valittujen tilien viestejä
+    if (!settings.accountIds.includes(msg.folder?.accountId)) throw new Error("Viestin tili ei ole lajiteltavien tilien joukossa");
     if (!msg.folder?.specialUse?.includes("inbox")) throw new Error("Viesti ei ole enää Saapuneissa");
 
     const target = await getTargetFolder(msg.folder.id, category);
     await moveMessages([msg], target);
 
     if (msg.headerMessageId) {
-      memory.manualMoves[msg.headerMessageId] = target.path ?? "";
-      delete memory.aiUnsure[msg.headerMessageId];
-      await api().storage.local.set({ manualMoves: memory.manualMoves, aiUnsure: memory.aiUnsure });
+      rememberManual(msg, target.path);
+      if (hasEntry(memory.aiUnsure, msg.headerMessageId)) {
+        delete memory.aiUnsure[msg.headerMessageId];
+        await saveAiUnsure();
+      }
+      await saveManualMoves();
     }
     console.log(`🖐️ Siirretty popupista → ${category}`);
     return { folder: target.name };

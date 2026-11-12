@@ -19,6 +19,8 @@ export const LIMITS = {
 const ADDRESS_RE = /^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/;
 const DOMAIN_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 const MODEL_RE = /^[A-Za-z0-9._:-]+$/;
+// Alkaa kirjaimella tai numerolla (ei "__proto__" tms.)
+const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 function asString(value) {
   return typeof value === "string" ? value : value == null ? "" : String(value);
@@ -80,7 +82,13 @@ export function splitList(text, { allowSpaces = false } = {}) {
 export function cleanList(values, cleaner, label = "") {
   const result = [];
   const errors = [];
-  const list = Array.isArray(values) ? values : values == null ? [] : [values];
+  let list = Array.isArray(values) ? values : values == null ? [] : [values];
+
+  // Valtava lista rajataan ennen käsittelyä, ettei haitallinen tiedosto jumita sivua
+  if (list.length > LIMITS.listItems) {
+    errors.push(`${label || "Lista"}: liian monta arvoa (max ${LIMITS.listItems})`);
+    list = list.slice(0, LIMITS.listItems);
+  }
 
   for (const value of list) {
     try {
@@ -91,10 +99,6 @@ export function cleanList(values, cleaner, label = "") {
     }
   }
 
-  if (result.length > LIMITS.listItems) {
-    errors.push(`${label || "Lista"}: liian monta arvoa (max ${LIMITS.listItems})`);
-    result.length = LIMITS.listItems;
-  }
   return { values: result, errors };
 }
 
@@ -127,7 +131,7 @@ export function normalizeRule(raw) {
   const match = raw?.match === "all" ? "all" : "any";
 
   const rule = {
-    id: typeof raw?.id === "string" && raw.id.length > 0 && raw.id.length <= 64 ? raw.id : newId(),
+    id: typeof raw?.id === "string" && ID_RE.test(raw.id) ? raw.id : newId(),
     category,
     match,
     // all-säännöt tarkistetaan aina ensin, joten etusija ei koske niitä
@@ -156,8 +160,10 @@ export function normalizeRules(rawRules) {
   const rules = [];
   const errors = [];
   const ids = new Set();
+  const list = Array.isArray(rawRules) ? rawRules : [];
+  if (list.length > LIMITS.rules) errors.push(`Liian monta sääntöä (max ${LIMITS.rules}), loput jätettiin pois`);
 
-  (Array.isArray(rawRules) ? rawRules : []).slice(0, LIMITS.rules).forEach((raw, index) => {
+  list.slice(0, LIMITS.rules).forEach((raw, index) => {
     const { rule, errors: ruleErrors } = normalizeRule(raw);
     errors.push(...ruleErrors.map((e) => `Sääntö ${index + 1}: ${e}`));
     if (!rule) return;
@@ -202,11 +208,13 @@ export function normalizeBlocklist(raw) {
 // ===== Asetukset =====
 
 // Yhdistää tallennetut asetukset oletuksiin ja hylkää väärän tyyppiset arvot
-export function normalizeSettings(raw = {}) {
+export function normalizeSettings(input = {}) {
   const s = { ...DEFAULT_SETTINGS };
   const errors = [];
+  // Vain tunnetut kentät luetaan; muut (myös __proto__ ja constructor) ohitetaan
+  const raw = input && typeof input === "object" && !Array.isArray(input) ? input : {};
 
-  for (const key of ["dryRun", "sortOnStartup", "sortNewMail", "aiEnabled"]) {
+  for (const key of ["dryRun", "sortOnStartup", "sortNewMail", "verboseLog", "aiEnabled"]) {
     if (typeof raw[key] === "boolean") s[key] = raw[key];
   }
 
@@ -223,7 +231,9 @@ export function normalizeSettings(raw = {}) {
   }
 
   if (Array.isArray(raw.accountIds)) {
-    s.accountIds = [...new Set(raw.accountIds.filter((id) => typeof id === "string" && id.length > 0 && id.length <= 100))];
+    s.accountIds = [
+      ...new Set(raw.accountIds.slice(0, 100).filter((id) => typeof id === "string" && id.length > 0 && id.length <= 100)),
+    ];
   }
 
   if (raw.freemailDomains !== undefined) {

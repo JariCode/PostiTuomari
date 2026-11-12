@@ -11,7 +11,7 @@
 //   "aiBlocklist": { "addresses": [], "domains": [] }
 // }
 import { api } from "./storage.js";
-import { normalizeBlocklist, normalizeCategories, normalizeRules, normalizeSettings } from "./validate.js";
+import { LIMITS, normalizeBlocklist, normalizeCategories, normalizeRules, normalizeSettings } from "./validate.js";
 
 export const EXPORT_FORMAT = "postituomari";
 export const EXPORT_VERSION = 1;
@@ -47,24 +47,28 @@ export function parseImport(data) {
 
   const rulesResult = normalizeRules(data.rules ?? []);
   errors.push(...rulesResult.errors);
-  const rules = rulesResult.rules;
 
-  // Säännön kategoria puuttuu listasta → lisätään loppuun
-  for (const rule of rules) {
+  // Säännön kategoria puuttuu listasta → lisätään loppuun (jos kategorioita mahtuu vielä)
+  const rules = [];
+  for (const rule of rulesResult.rules) {
     const existing = categories.find((c) => c.toLowerCase() === rule.category.toLowerCase());
     if (existing) {
       rule.category = existing;
-    } else {
+    } else if (categories.length < LIMITS.categories) {
       categories.push(rule.category);
       warnings.push(`Kategoria "${rule.category}" lisättiin, koska sääntö käyttää sitä`);
+    } else {
+      errors.push(`Sääntö kategoriaan "${rule.category}" jätettiin pois: kategorioita on jo enimmäismäärä`);
+      continue;
     }
+    rules.push(rule);
   }
 
   const block = normalizeBlocklist(data.aiBlocklist ?? {});
   errors.push(...block.errors);
 
   let settings = null;
-  if (data.settings && typeof data.settings === "object") {
+  if (data.settings && typeof data.settings === "object" && !Array.isArray(data.settings)) {
     const { apiKey, ...rest } = data.settings;
     if (apiKey) warnings.push("Tiedostossa oli API-avain – sitä ei tuoda");
     const result = normalizeSettings(rest);
@@ -74,7 +78,10 @@ export function parseImport(data) {
   }
 
   const accountNames = Array.isArray(data.accountNames)
-    ? data.accountNames.filter((n) => typeof n === "string" && n.trim()).map((n) => n.trim())
+    ? data.accountNames
+        .slice(0, 100)
+        .filter((n) => typeof n === "string" && n.trim() && n.length <= 200)
+        .map((n) => n.trim())
     : [];
 
   return { categories, rules, aiBlocklist: block.blocklist, settings, accountNames, errors, warnings };

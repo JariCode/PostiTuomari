@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS = {
   dryRun: true,
   sortOnStartup: true,
   sortNewMail: true,
+  verboseLog: false, // true = lokiin myös lähettäjät ja otsikot (vianetsintään)
   aiEnabled: false,
   model: "gpt-4.1-mini",
   apiKey: "",

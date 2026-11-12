@@ -31,6 +31,15 @@ export function General({ settings }) {
         checked={settings.sortNewMail}
         onChange={(sortNewMail) => save({ sortNewMail })}
       />
+      <Toggle
+        label="Yksityiskohtainen loki (vianetsintään)"
+        description="Kirjoittaa lisäosan konsoliin jokaisen viestin lähettäjän, otsikon ja tuomion. Pois päältä lokiin tulee vain määriä, kategorioita ja virheitä."
+        checked={settings.verboseLog}
+        onChange={(verboseLog) => save({ verboseLog })}
+      />
+      {settings.verboseLog && (
+        <Notice kind="info">Yksityiskohtainen loki on päällä: konsolissa näkyy lähettäjiä ja otsikoita. Ota pois, kun vianetsintä on valmis.</Notice>
+      )}
       <Status status={status} />
     </Section>
   );
