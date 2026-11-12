@@ -30,6 +30,8 @@ export function cleanCategory(value) {
   if (!name) throw new Error("Kategorian nimi ei voi olla tyhjä");
   if (name.length > LIMITS.category) throw new Error(`Kategorian nimi on liian pitkä (max ${LIMITS.category})`);
   if (/[/\\]/.test(name)) throw new Error("Kategorian nimessä ei voi olla / tai \\ -merkkiä");
+  // Kategoriat lähtevät AI:lle, eikä osoitetarkistus päästäisi @-merkillistä nimeä läpi
+  if (name.includes("@")) throw new Error("Kategorian nimessä ei voi olla @-merkkiä");
   if (name.toLowerCase() === UNSURE.toLowerCase()) throw new Error(`"${UNSURE}" on varattu nimi`);
   return name;
 }

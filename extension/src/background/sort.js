@@ -173,19 +173,20 @@ async function askAI(messages, state) {
 
   try {
     console.log(`🤖 Kysytään AI:lta ${messages.length} viestiä...`);
-    const verdicts = await classifyWithAI(messages, state);
+    const { verdicts, problems } = await classifyWithAI(messages, state);
 
+    // Muistiin vain ne, joista AI vastasi nimenomaan "Epävarma" – ei estettyjä eikä epäonnistuneita eriä
     let unsureChanged = false;
     for (const msg of messages) {
-      const category = verdicts.get(String(msg.id)) ?? UNSURE;
-      if (category === UNSURE && msg.headerMessageId) {
+      if (verdicts.get(String(msg.id)) === UNSURE && msg.headerMessageId) {
         memory.aiUnsure[msg.headerMessageId] = Date.now();
         unsureChanged = true;
       }
     }
     if (unsureChanged) await saveAiUnsure();
 
-    return { verdicts, status: "käytössä" };
+    const status = problems.length ? `osittain: ${[...new Set(problems)].join(", ")}` : "käytössä";
+    return { verdicts, status };
   } catch (err) {
     console.warn(`⚠️ AI ei käytettävissä (${err.message}) – jatketaan pelkillä säännöillä`);
     return { verdicts: new Map(), status: `virhe: ${err.message}` };

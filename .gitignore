@@ -7,6 +7,9 @@ dist/
 # Henkilökohtaiset säännöt – ei koskaan GitHubiin
 extension/rules.local.js
 
+# Poistettu Express-backend (paikallinen kansio voi vielä olla levyllä)
+backend/
+
 # Omat tiedostot, paketit ja viennit
 private/
 *.xpi

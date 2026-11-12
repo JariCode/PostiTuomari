@@ -2,6 +2,7 @@
 // Kuuntelijat rekisteröidään heti ylätasolla, jotta MV3:n tapahtumasivu herää niihin.
 import { api, ensureDefaults, loadState, saveSettings } from "../shared/storage.js";
 import { applyImport, parseImport } from "../shared/transfer.js";
+import { testAiConnection } from "./ai.js";
 import { handleMoved, handleNewMail, loadMemory, logAccounts, restoreFlagged, sortInboxes, watchMemory } from "./sort.js";
 
 // Oletukset ja muistit ladataan ennen kuin yksikään kuuntelija tekee mitään
@@ -55,6 +56,8 @@ api().runtime.onMessage.addListener((message, sender) => {
       return ready.then(() => sortInboxes());
     case "restoreFlagged":
       return ready.then(() => restoreFlagged({ preview: message.preview === true }));
+    case "testAi":
+      return ready.then(async () => testAiConnection(await loadState()));
     default:
       return undefined;
   }
@@ -76,6 +79,11 @@ const debugTools = {
   async setDryRun(dryRun) {
     return (await saveSettings({ dryRun: dryRun === true })).dryRun;
   },
+  // AI päälle/pois. Avain asetetaan asetussivulla (ei konsolissa, ettei se jää historiaan).
+  async setAiEnabled(aiEnabled) {
+    return (await saveSettings({ aiEnabled: aiEnabled === true })).aiEnabled;
+  },
+  testAi: async () => testAiConnection(await loadState()),
   sortNow: () => sortInboxes(),
   restoreFlagged: (options) => restoreFlagged(options),
   // Tuonti vientitiedoston sisällöstä (objekti tai JSON-merkkijono). Palauttaa vain määrät.
