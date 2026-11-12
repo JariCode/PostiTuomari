@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addDefaultRule, ensureDefaults, loadState, missingDefaultRules } from "../src/shared/storage.js";
+import {
+  addCategory,
+  addDefaultRule,
+  deleteCategory,
+  ensureDefaults,
+  loadState,
+  missingDefaultRules,
+  renameCategory,
+} from "../src/shared/storage.js";
 
 // storage.local-vale
 function mockStorage(initial = {}) {
@@ -40,6 +48,38 @@ test("addDefaultRule lisää laskusäännön etusijasääntöjen perään, muut 
   assert.equal((await addDefaultRule("default-raha-laskut")).added, false);
   assert.ok(!(await missingDefaultRules()).some((r) => r.id === "default-raha-laskut"));
   await assert.rejects(() => addDefaultRule("tuntematon"));
+});
+
+test("addDefaultRule: Vakuutukset menee laskusäännön edelle", async () => {
+  const store = mockStorage({
+    rules: [
+      { id: "t", category: "Tilit ja tietoturva", subjectFirst: true, subjectWords: ["salasana"] },
+      { id: "default-raha-laskut", category: "Raha", subjectFirst: true, subjectWords: ["lasku", "eräpäivä", "maksumuistutus"] },
+      { id: "oma", category: "Ostokset", domains: ["kauppa.example"] },
+    ],
+    categories: ["Raha"],
+  });
+  assert.equal((await addDefaultRule("default-vakuutukset")).added, true);
+  assert.deepEqual(store.rules.map((r) => r.id), ["t", "default-vakuutukset", "default-raha-laskut", "oma"]);
+});
+
+test("kategorian nimeäminen päivittää säännöt, poisto poistaa säännöt", async () => {
+  const store = mockStorage({
+    categories: ["Raha", "Ostokset"],
+    rules: [
+      { id: "a", category: "Raha", domains: ["pankki.example"] },
+      { id: "b", category: "Ostokset", domains: ["kauppa.example"] },
+    ],
+  });
+  assert.deepEqual(await renameCategory("Raha", " Talous "), { renamedRules: 1 });
+  assert.deepEqual(store.categories, ["Talous", "Ostokset"]);
+  assert.equal(store.rules[0].category, "Talous");
+  await assert.rejects(() => renameCategory("Talous", "ostokset"));
+  await assert.rejects(() => addCategory("OSTOKSET"));
+
+  assert.deepEqual(await deleteCategory("Ostokset"), { deletedRules: 1 });
+  assert.deepEqual(store.categories, ["Talous"]);
+  assert.equal(store.rules.length, 1);
 });
 
 test("ensiasennus: oletukset, eikä olemassa olevia sääntöjä muuteta", async () => {

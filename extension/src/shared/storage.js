@@ -7,7 +7,7 @@
 //   manualMoves  – headerMessageId → kansion polku, johon käyttäjä viestin siirsi
 //   aiUnsure     – headerMessageId → aikaleima: AI ei osannut päättää, ei kysytä uudelleen
 import { DEFAULT_AI_BLOCKLIST, DEFAULT_CATEGORIES, DEFAULT_RULE_TEMPLATES } from "./defaults.js";
-import { normalizeBlocklist, normalizeCategories, normalizeRules, normalizeSettings } from "./validate.js";
+import { cleanCategory, normalizeBlocklist, normalizeCategories, normalizeRules, normalizeSettings } from "./validate.js";
 
 export const SCHEMA_VERSION = 1;
 
@@ -101,17 +101,28 @@ export async function missingDefaultRules() {
 }
 
 // Lisää yhden oletussäännön olemassa oleviin sääntöihin ilman muiden sääntöjen muuttamista.
-// Etusijasääntö lisätään viimeiseksi muiden etusijasääntöjen jälkeen (järjestys niiden kesken säilyy),
-// muut sääntöjen loppuun.
+// Sijainti oletusjärjestyksen mukaan: ennen seuraavaa samaan vaiheeseen kuuluvaa oletussääntöä,
+// joka on jo käytössä (esim. Vakuutukset ennen laskusääntöä). Muuten etusijasääntö
+// viimeisen etusijasäännön perään ja muut loppuun.
 export async function addDefaultRule(id) {
-  const rule = createDefaultRules().find((r) => r.id === id);
-  if (!rule) throw new Error(`Tuntematon oletussääntö: ${id}`);
+  const defaults = createDefaultRules();
+  const index = defaults.findIndex((r) => r.id === id);
+  if (index === -1) throw new Error(`Tuntematon oletussääntö: ${id}`);
+  const rule = defaults[index];
 
   const { rules, categories } = await loadState();
   if (rules.some((r) => sameRule(rule, r))) return { added: false, rules: rules.length };
 
   const next = [...rules];
-  if (rule.subjectFirst) {
+  let position = -1;
+  for (const later of defaults.slice(index + 1).filter((d) => d.subjectFirst === rule.subjectFirst)) {
+    position = next.findIndex((r) => sameRule(later, r));
+    if (position !== -1) break;
+  }
+
+  if (position !== -1) {
+    next.splice(position, 0, rule);
+  } else if (rule.subjectFirst) {
     const lastFirst = next.reduce((acc, r, i) => (r.subjectFirst ? i : acc), -1);
     next.splice(lastFirst + 1, 0, rule);
   } else {
@@ -123,6 +134,58 @@ export async function addDefaultRule(id) {
   await api().storage.local.set(update);
   return { added: true, rules: next.length };
 }
+
+// ===== Kategoriat =====
+
+function sameName(a, b) {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+export async function addCategory(name) {
+  const clean = cleanCategory(name);
+  const { categories } = await loadState();
+  if (categories.some((c) => sameName(c, clean))) throw new Error("Samanniminen kategoria on jo olemassa");
+  return saveCategories([...categories, clean]);
+}
+
+// Nimeää kategorian ja päivittää sitä käyttävät säännöt. Thunderbirdin kansiota ei nimetä uudelleen.
+export async function renameCategory(oldName, newName) {
+  const clean = cleanCategory(newName);
+  const { categories, rules } = await loadState();
+  if (!categories.includes(oldName)) throw new Error("Kategoriaa ei löydy");
+  if (categories.some((c) => c !== oldName && sameName(c, clean))) {
+    throw new Error("Samanniminen kategoria on jo olemassa");
+  }
+  const renamedRules = rules.filter((r) => r.category === oldName).length;
+  await api().storage.local.set({
+    categories: categories.map((c) => (c === oldName ? clean : c)),
+    rules: rules.map((r) => (r.category === oldName ? { ...r, category: clean } : r)),
+  });
+  return { renamedRules };
+}
+
+// Poistaa kategorian ja sitä käyttävät säännöt (asetussivu varoittaa ja kysyy ensin)
+export async function deleteCategory(name) {
+  const { categories, rules } = await loadState();
+  const deletedRules = rules.filter((r) => r.category === name).length;
+  await api().storage.local.set({
+    categories: categories.filter((c) => c !== name),
+    rules: rules.filter((r) => r.category !== name),
+  });
+  return { deletedRules };
+}
+
+export async function moveCategory(name, delta) {
+  const { categories } = await loadState();
+  const from = categories.indexOf(name);
+  const to = from + delta;
+  if (from === -1 || to < 0 || to >= categories.length) return categories;
+  const next = [...categories];
+  [next[from], next[to]] = [next[to], next[from]];
+  return saveCategories(next);
+}
+
+// ===== Muistit =====
 
 export async function clearMemory(key) {
   if (key !== "manualMoves" && key !== "aiUnsure") throw new Error(`Tuntematon muisti: ${key}`);

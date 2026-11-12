@@ -66,6 +66,13 @@ export const DEFAULT_RULE_TEMPLATES = [
     ],
   },
   {
+    // Ennen laskusääntöä: "vakuutuslasku" ja "Lasku: kotivakuutus" menevät Vakuutuksiin
+    id: "default-vakuutukset",
+    category: "Vakuutukset",
+    subjectFirst: true,
+    subjectWords: ["vakuutus", "vahinkoilmoitus", "korvaushakemus"],
+  },
+  {
     // Laskut ratkaisevat ennen lähettäjää: kaupan tai palvelun lasku menee Rahaan, ei lähettäjän kategoriaan
     id: "default-raha-laskut",
     category: "Raha",
@@ -87,11 +94,6 @@ export const DEFAULT_RULE_TEMPLATES = [
     subjectWords: ["ajanvaraus", "laboratorio", "resepti", "lääkäri", "hammaslääkäri"],
   },
   { id: "default-viranomaiset", category: "Viranomaiset", subjectWords: ["verotus", "verokortti", "veropäätös"] },
-  {
-    id: "default-vakuutukset",
-    category: "Vakuutukset",
-    subjectWords: ["vakuutus", "vahinkoilmoitus", "korvaushakemus"],
-  },
   { id: "default-raha", category: "Raha", subjectWords: ["laina"] },
   {
     id: "default-asuminen",

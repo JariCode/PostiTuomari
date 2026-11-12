@@ -60,6 +60,16 @@ export function cleanWord(value) {
   return word;
 }
 
+// Tekstikentän sisältö listaksi. Osoitteet ja domainit: erotin rivinvaihto, pilkku,
+// puolipiste tai välilyönti. Otsikkosanat: vain rivinvaihto tai pilkku (sanassa voi olla välilyönti).
+export function splitList(text, { allowSpaces = false } = {}) {
+  const separator = allowSpaces ? /[\n,]+/ : /[\s,;]+/;
+  return String(text ?? "")
+    .split(separator)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 // ===== Listat =====
 
 // Siistii listan, poistaa tuplat. Virheelliset arvot jätetään pois ja kerätään errors-listaan.

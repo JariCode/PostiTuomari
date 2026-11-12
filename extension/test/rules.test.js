@@ -128,6 +128,9 @@ test("laskusana etusijalla ohittaa toisen kategorian domain-säännön (oletuss�
   ];
   assert.equal(classify({ author: "info@kauppa.example", subject: "Lasku tilauksesta" }, rules).category, "Raha");
   assert.equal(classify({ author: "info@kauppa.example", subject: "Uutuudet" }, rules).category, "Ostokset");
+  // Vakuutuslasku menee Vakuutuksiin, ei Rahaan
+  assert.equal(classify({ author: "info@kauppa.example", subject: "Vakuutuslasku 2027" }, rules).category, "Vakuutukset");
+  assert.equal(classify({ author: "x@muu.example", subject: "Lasku: kotivakuutus" }, rules).category, "Vakuutukset");
   // "laina" on tavallinen otsikkosana: domain voittaa
   assert.equal(classify({ author: "info@kauppa.example", subject: "Laina-aika" }, rules).category, "Ostokset");
 });
